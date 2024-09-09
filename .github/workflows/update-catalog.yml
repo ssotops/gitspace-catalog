@@ -25,6 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          cd .github
           go mod download
 
       - name: Install Dagger
@@ -34,6 +35,8 @@ jobs:
           cd -
 
       - name: Run Dagger pipeline
-        run: go run ./cmd/dagger_pipeline.go
+        run: |
+          cd .github
+          go run ./cmd/dagger_pipeline.go
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
