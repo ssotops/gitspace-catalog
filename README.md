@@ -1,6 +1,6 @@
 # Gitspace Extension Catalog
 
-This repository serves as a central catalog for Gitspace extensions, including plugins and templates.
+Official `ssotops` catalog for `gitspace` extensions, including plugins and templates.
 
 ## Structure
 
