@@ -3,6 +3,7 @@ name: Update Catalog
 on:
   push:
     branches:
+      - master
       - main
     paths:
       - 'plugins/**'
