@@ -15,11 +15,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
           go-version: '1.23'
+
+      - name: Install dependencies
+        run: |
+          go mod download
 
       - name: Install Dagger
         run: |
@@ -28,6 +34,6 @@ jobs:
           cd -
 
       - name: Run Dagger pipeline
-        run: go run ./cmd/dagger-pipeline
+        run: go run ./cmd/dagger_pipeline.go
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

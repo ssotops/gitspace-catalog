@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pelletier/go-toml"
 )
@@ -39,48 +40,54 @@ func loadCatalog() (*toml.Tree, error) {
 
 func updatePlugins(catalog *toml.Tree) {
 	plugins := make(map[string]interface{})
-	err := filepath.Walk("plugins", func(path string, info os.FileInfo, err error) error {
+	filepath.Walk("plugins", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".toml" {
-			name := filepath.Base(path)
+			name := strings.TrimSuffix(filepath.Base(path), ".toml")
 			plugins[name] = path
 		}
 		return nil
 	})
-	if err != nil {
-		fmt.Println("Error walking plugins directory:", err)
-		return
-	}
 	catalog.Set("plugins", plugins)
 }
 
 func updateTemplates(catalog *toml.Tree) {
 	templates := make(map[string]interface{})
-	err := filepath.Walk("templates", func(path string, info os.FileInfo, err error) error {
+	filepath.Walk("templates", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".toml" {
-			name := filepath.Base(path)
+			name := strings.TrimSuffix(filepath.Base(path), ".toml")
 			templates[name] = path
 		}
 		return nil
 	})
-	if err != nil {
-		fmt.Println("Error walking templates directory:", err)
-		return
-	}
 	catalog.Set("templates", templates)
 }
 
 func incrementVersion(catalog *toml.Tree) {
 	version := catalog.Get("catalog.version").(string)
-	// Implement version incrementing logic here
-	// For simplicity, we're just appending a "+" to the version
-	newVersion := version + "+"
-	catalog.Set("catalog.version", newVersion)
+	parts := strings.Split(version, ".")
+	if len(parts) == 3 {
+		patch := parts[2]
+		newPatch := fmt.Sprintf("%d", atoi(patch)+1)
+		newVersion := fmt.Sprintf("%s.%s.%s", parts[0], parts[1], newPatch)
+		catalog.Set("catalog.version", newVersion)
+	}
+}
+
+func atoi(s string) int {
+	i := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			break
+		}
+		i = i*10 + int(c-'0')
+	}
+	return i
 }
 
 func saveCatalog(catalog *toml.Tree) error {
