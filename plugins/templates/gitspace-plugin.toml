@@ -1,0 +1,9 @@
+[plugin]
+name = "gitspace-plugin-templates"
+version = "0.1.0"
+description = "A Gitspace plugin"
+author = "Your Organization"
+
+[[plugin.sources]]
+path = "plugin.go"
+entry_point = "Plugin"
