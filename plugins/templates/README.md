@@ -1,6 +1,6 @@
 # gitspace-plugin-templates
 
-Templates for Gitspace plugins.
+Templates for `gitspace` plugins.
 
 ## Usage
 
