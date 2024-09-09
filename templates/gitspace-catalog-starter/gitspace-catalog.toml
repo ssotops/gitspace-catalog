@@ -1,0 +1,10 @@
+[catalog]
+name = "Gitspace Community Catalog"
+description = "Community catalog of plugins and templates for Gitspace"
+version = "0.1.0"
+
+[plugins]
+# This section will be automatically updated by the GitHub Action
+
+[templates]
+# This section will be automatically updated by the GitHub Action
