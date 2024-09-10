@@ -14,19 +14,12 @@ import (
 func updateCatalog(repoRoot string) error {
 	catalogPath := filepath.Join(repoRoot, "gitspace-catalog.toml")
 
-	// Check if the file exists
-	if _, err := os.Stat(catalogPath); os.IsNotExist(err) {
-		return fmt.Errorf("gitspace-catalog.toml not found at %s", catalogPath)
-	}
-
 	catalog, err := loadCatalog(catalogPath)
 	if err != nil {
 		return fmt.Errorf("error loading catalog: %w", err)
 	}
 
-	// Preserve existing catalog information
 	preserveCatalogInfo(catalog)
-
 	updatePlugins(catalog, repoRoot)
 	updateTemplates(catalog, repoRoot)
 	incrementVersion(catalog)
@@ -58,107 +51,110 @@ func preserveCatalogInfo(catalog *toml.Tree) {
 }
 
 func loadCatalog(path string) (*toml.Tree, error) {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return toml.Load(`[catalog]
+name = "Gitspace Official Catalog"
+description = "Official catalog of plugins and templates for Gitspace"
+version = "0.1.0"
+
+[plugins]
+
+[templates]
+`)
 	}
-	return toml.LoadBytes(data)
+	return toml.LoadFile(path)
 }
 
 func updatePlugins(catalog *toml.Tree, repoRoot string) {
 	plugins := make(map[string]interface{})
-	if pluginsTree := catalog.Get("plugins"); pluginsTree != nil {
-		if tree, ok := pluginsTree.(*toml.Tree); ok {
-			for _, key := range tree.Keys() {
-				plugins[key] = tree.Get(key)
-			}
-		}
-	}
-
 	pluginsDir := filepath.Join(repoRoot, "plugins")
+
 	filepath.Walk(pluginsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Printf("Error accessing path %q: %v\n", path, err)
 			return nil
 		}
-		if !info.IsDir() && filepath.Ext(path) == ".toml" {
-			relPath, _ := filepath.Rel(repoRoot, path)
-			name := strings.TrimSuffix(filepath.Base(path), ".toml")
-			pluginInfo := make(map[string]interface{})
-			pluginInfo["path"] = relPath
-			pluginInfo["version"] = getPluginVersion(path)
-			plugins[name] = pluginInfo
+		if info.IsDir() && info.Name() != "plugins" {
+			pluginInfo, err := loadPluginInfo(path)
+			if err == nil {
+				plugins[info.Name()] = pluginInfo
+			}
 		}
 		return nil
 	})
+
 	catalog.Set("plugins", plugins)
+}
+
+func loadPluginInfo(pluginDir string) (map[string]interface{}, error) {
+	tomlPath := filepath.Join(pluginDir, "gitspace-plugin.toml")
+	tree, err := toml.LoadFile(tomlPath)
+	if err != nil {
+		return nil, err
+	}
+
+	info := make(map[string]interface{})
+	info["version"] = tree.Get("plugin.version")
+	info["description"] = tree.Get("plugin.description")
+	info["path"] = pluginDir
+	return info, nil
 }
 
 func updateTemplates(catalog *toml.Tree, repoRoot string) {
 	templates := make(map[string]interface{})
-	if templatesTree := catalog.Get("templates"); templatesTree != nil {
-		if tree, ok := templatesTree.(*toml.Tree); ok {
-			for _, key := range tree.Keys() {
-				templates[key] = tree.Get(key)
-			}
-		}
-	}
-
 	templatesDir := filepath.Join(repoRoot, "templates")
+
 	filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Printf("Error accessing path %q: %v\n", path, err)
 			return nil
 		}
-		if !info.IsDir() && filepath.Ext(path) == ".toml" {
-			relPath, _ := filepath.Rel(repoRoot, path)
-			name := strings.TrimSuffix(filepath.Base(path), ".toml")
-			templateInfo := make(map[string]interface{})
-			templateInfo["path"] = relPath
-			templateInfo["version"] = getTemplateVersion(path)
-			templates[name] = templateInfo
+		if info.IsDir() && info.Name() != "templates" {
+			templateInfo, err := loadTemplateInfo(path)
+			if err == nil {
+				templates[info.Name()] = templateInfo
+			}
 		}
 		return nil
 	})
+
 	catalog.Set("templates", templates)
 }
 
-func getPluginVersion(path string) string {
-	// Implement logic to extract plugin version from the TOML file
-	// This is a placeholder implementation
-	return "0.1.0"
-}
+func loadTemplateInfo(templateDir string) (map[string]interface{}, error) {
+	var tomlPath string
+	if _, err := os.Stat(filepath.Join(templateDir, "gitspace-catalog.toml")); err == nil {
+		tomlPath = filepath.Join(templateDir, "gitspace-catalog.toml")
+	} else {
+		tomlPath = filepath.Join(templateDir, "gitspace-plugin.toml")
+	}
 
-func getTemplateVersion(path string) string {
-	// Implement logic to extract template version from the TOML file
-	// This is a placeholder implementation
-	return "0.1.0"
+	tree, err := toml.LoadFile(tomlPath)
+	if err != nil {
+		return nil, err
+	}
+
+	info := make(map[string]interface{})
+	if tree.Has("template") {
+		info["version"] = tree.Get("template.version")
+		info["description"] = tree.Get("template.description")
+	} else if tree.Has("plugin") {
+		info["version"] = tree.Get("plugin.version")
+		info["description"] = tree.Get("plugin.description")
+	}
+	info["path"] = templateDir
+	return info, nil
 }
 
 func incrementVersion(catalog *toml.Tree) {
 	catalogInfo := catalog.Get("catalog").(*toml.Tree)
-	versionInterface := catalogInfo.Get("version")
-	if versionInterface == nil {
-		catalogInfo.Set("version", "0.1.0")
-		return
-	}
-
-	version, ok := versionInterface.(string)
-	if !ok {
-		catalogInfo.Set("version", "0.1.0")
-		return
-	}
-
+	version := catalogInfo.Get("version").(string)
 	parts := strings.Split(version, ".")
-	if len(parts) != 3 {
-		catalogInfo.Set("version", "0.1.0")
-		return
+	if len(parts) == 3 {
+		patch := atoi(parts[2])
+		newVersion := fmt.Sprintf("%s.%s.%d", parts[0], parts[1], patch+1)
+		catalogInfo.Set("version", newVersion)
 	}
-
-	patch := parts[2]
-	newPatch := fmt.Sprintf("%d", atoi(patch)+1)
-	newVersion := fmt.Sprintf("%s.%s.%s", parts[0], parts[1], newPatch)
-	catalogInfo.Set("version", newVersion)
 }
 
 func updateLastUpdated(catalog *toml.Tree) {
@@ -170,8 +166,7 @@ func updateLastUpdated(catalog *toml.Tree) {
 
 func getLatestCommitHash() string {
 	// Implement logic to get the latest commit hash
-	// This is a placeholder implementation
-	return "abc123"
+	return "placeholder_hash"
 }
 
 func atoi(s string) int {
