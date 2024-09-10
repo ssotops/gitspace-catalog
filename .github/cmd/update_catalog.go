@@ -24,6 +24,9 @@ func updateCatalog(repoRoot string) error {
 		return fmt.Errorf("error loading catalog: %w", err)
 	}
 
+	// Preserve existing catalog information
+	preserveCatalogInfo(catalog)
+
 	updatePlugins(catalog, repoRoot)
 	updateTemplates(catalog, repoRoot)
 	incrementVersion(catalog)
@@ -36,6 +39,22 @@ func updateCatalog(repoRoot string) error {
 
 	fmt.Println("Catalog updated successfully")
 	return nil
+}
+
+func preserveCatalogInfo(catalog *toml.Tree) {
+	if !catalog.Has("catalog") {
+		catalog.Set("catalog", make(map[string]interface{}))
+	}
+	catalogInfo := catalog.Get("catalog").(*toml.Tree)
+	if !catalogInfo.Has("name") {
+		catalogInfo.Set("name", "Gitspace Official Catalog")
+	}
+	if !catalogInfo.Has("description") {
+		catalogInfo.Set("description", "Official catalog of plugins and templates for Gitspace")
+	}
+	if !catalogInfo.Has("version") {
+		catalogInfo.Set("version", "0.1.0")
+	}
 }
 
 func loadCatalog(path string) (*toml.Tree, error) {
@@ -117,31 +136,29 @@ func getTemplateVersion(path string) string {
 }
 
 func incrementVersion(catalog *toml.Tree) {
-	versionInterface := catalog.Get("catalog.version")
+	catalogInfo := catalog.Get("catalog").(*toml.Tree)
+	versionInterface := catalogInfo.Get("version")
 	if versionInterface == nil {
-		// If version doesn't exist, set it to 0.1.0
-		catalog.Set("catalog.version", "0.1.0")
+		catalogInfo.Set("version", "0.1.0")
 		return
 	}
 
 	version, ok := versionInterface.(string)
 	if !ok {
-		// If version is not a string, set it to 0.1.0
-		catalog.Set("catalog.version", "0.1.0")
+		catalogInfo.Set("version", "0.1.0")
 		return
 	}
 
 	parts := strings.Split(version, ".")
 	if len(parts) != 3 {
-		// If version is not in the format x.y.z, set it to 0.1.0
-		catalog.Set("catalog.version", "0.1.0")
+		catalogInfo.Set("version", "0.1.0")
 		return
 	}
 
 	patch := parts[2]
 	newPatch := fmt.Sprintf("%d", atoi(patch)+1)
 	newVersion := fmt.Sprintf("%s.%s.%s", parts[0], parts[1], newPatch)
-	catalog.Set("catalog.version", newVersion)
+	catalogInfo.Set("version", newVersion)
 }
 
 func updateLastUpdated(catalog *toml.Tree) {
