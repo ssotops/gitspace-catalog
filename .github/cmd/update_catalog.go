@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml"
 )
@@ -26,6 +27,7 @@ func updateCatalog(repoRoot string) error {
 	updatePlugins(catalog, repoRoot)
 	updateTemplates(catalog, repoRoot)
 	incrementVersion(catalog)
+	updateLastUpdated(catalog)
 
 	err = saveCatalog(catalog, catalogPath)
 	if err != nil {
@@ -46,6 +48,14 @@ func loadCatalog(path string) (*toml.Tree, error) {
 
 func updatePlugins(catalog *toml.Tree, repoRoot string) {
 	plugins := make(map[string]interface{})
+	if pluginsTree := catalog.Get("plugins"); pluginsTree != nil {
+		if tree, ok := pluginsTree.(*toml.Tree); ok {
+			for _, key := range tree.Keys() {
+				plugins[key] = tree.Get(key)
+			}
+		}
+	}
+
 	pluginsDir := filepath.Join(repoRoot, "plugins")
 	filepath.Walk(pluginsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -55,7 +65,10 @@ func updatePlugins(catalog *toml.Tree, repoRoot string) {
 		if !info.IsDir() && filepath.Ext(path) == ".toml" {
 			relPath, _ := filepath.Rel(repoRoot, path)
 			name := strings.TrimSuffix(filepath.Base(path), ".toml")
-			plugins[name] = relPath
+			pluginInfo := make(map[string]interface{})
+			pluginInfo["path"] = relPath
+			pluginInfo["version"] = getPluginVersion(path)
+			plugins[name] = pluginInfo
 		}
 		return nil
 	})
@@ -64,6 +77,14 @@ func updatePlugins(catalog *toml.Tree, repoRoot string) {
 
 func updateTemplates(catalog *toml.Tree, repoRoot string) {
 	templates := make(map[string]interface{})
+	if templatesTree := catalog.Get("templates"); templatesTree != nil {
+		if tree, ok := templatesTree.(*toml.Tree); ok {
+			for _, key := range tree.Keys() {
+				templates[key] = tree.Get(key)
+			}
+		}
+	}
+
 	templatesDir := filepath.Join(repoRoot, "templates")
 	filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -73,22 +94,67 @@ func updateTemplates(catalog *toml.Tree, repoRoot string) {
 		if !info.IsDir() && filepath.Ext(path) == ".toml" {
 			relPath, _ := filepath.Rel(repoRoot, path)
 			name := strings.TrimSuffix(filepath.Base(path), ".toml")
-			templates[name] = relPath
+			templateInfo := make(map[string]interface{})
+			templateInfo["path"] = relPath
+			templateInfo["version"] = getTemplateVersion(path)
+			templates[name] = templateInfo
 		}
 		return nil
 	})
 	catalog.Set("templates", templates)
 }
 
+func getPluginVersion(path string) string {
+	// Implement logic to extract plugin version from the TOML file
+	// This is a placeholder implementation
+	return "0.1.0"
+}
+
+func getTemplateVersion(path string) string {
+	// Implement logic to extract template version from the TOML file
+	// This is a placeholder implementation
+	return "0.1.0"
+}
+
 func incrementVersion(catalog *toml.Tree) {
-	version := catalog.Get("catalog.version").(string)
-	parts := strings.Split(version, ".")
-	if len(parts) == 3 {
-		patch := parts[2]
-		newPatch := fmt.Sprintf("%d", atoi(patch)+1)
-		newVersion := fmt.Sprintf("%s.%s.%s", parts[0], parts[1], newPatch)
-		catalog.Set("catalog.version", newVersion)
+	versionInterface := catalog.Get("catalog.version")
+	if versionInterface == nil {
+		// If version doesn't exist, set it to 0.1.0
+		catalog.Set("catalog.version", "0.1.0")
+		return
 	}
+
+	version, ok := versionInterface.(string)
+	if !ok {
+		// If version is not a string, set it to 0.1.0
+		catalog.Set("catalog.version", "0.1.0")
+		return
+	}
+
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		// If version is not in the format x.y.z, set it to 0.1.0
+		catalog.Set("catalog.version", "0.1.0")
+		return
+	}
+
+	patch := parts[2]
+	newPatch := fmt.Sprintf("%d", atoi(patch)+1)
+	newVersion := fmt.Sprintf("%s.%s.%s", parts[0], parts[1], newPatch)
+	catalog.Set("catalog.version", newVersion)
+}
+
+func updateLastUpdated(catalog *toml.Tree) {
+	lastUpdated := make(map[string]string)
+	lastUpdated["date"] = time.Now().Format(time.RFC3339)
+	lastUpdated["commit_hash"] = getLatestCommitHash()
+	catalog.Set("catalog.last_updated", lastUpdated)
+}
+
+func getLatestCommitHash() string {
+	// Implement logic to get the latest commit hash
+	// This is a placeholder implementation
+	return "abc123"
 }
 
 func atoi(s string) int {

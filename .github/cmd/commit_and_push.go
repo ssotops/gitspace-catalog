@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 func commitAndPush(repoRoot string) error {
@@ -13,6 +14,14 @@ func commitAndPush(repoRoot string) error {
 
 	if err := gitAdd(repoRoot); err != nil {
 		return fmt.Errorf("error adding files: %w", err)
+	}
+
+	// Check if there are changes to commit
+	if hasChanges, err := gitHasChanges(repoRoot); err != nil {
+		return fmt.Errorf("error checking for changes: %w", err)
+	} else if !hasChanges {
+		fmt.Println("No changes to commit")
+		return nil
 	}
 
 	if err := gitCommit(); err != nil {
@@ -43,12 +52,30 @@ func gitAdd(repoRoot string) error {
 	return cmd.Run()
 }
 
+func gitHasChanges(repoRoot string) (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = repoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
 func gitCommit() error {
 	cmd := exec.Command("git", "commit", "-m", "Update gitspace-catalog.toml")
-	return cmd.Run()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(output))
+	}
+	return nil
 }
 
 func gitPush() error {
 	cmd := exec.Command("git", "push")
-	return cmd.Run()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(output))
+	}
+	return nil
 }
