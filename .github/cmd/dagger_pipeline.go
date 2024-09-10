@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"dagger.io/dagger"
 )
@@ -25,8 +27,24 @@ func build(ctx context.Context) error {
 	}
 	defer client.Close()
 
+	// get the current working directory
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// determine the repository root
+	repoRoot := findRepoRoot(wd)
+	fmt.Printf("Repository root: %s\n", repoRoot)
+
+	// Check if gitspace-catalog.toml exists
+	catalogPath := filepath.Join(repoRoot, "gitspace-catalog.toml")
+	if _, err := os.Stat(catalogPath); os.IsNotExist(err) {
+		return fmt.Errorf("gitspace-catalog.toml not found at %s", catalogPath)
+	}
+
 	// get reference to the local project
-	src := client.Host().Directory("../..")
+	src := client.Host().Directory(repoRoot)
 
 	// get `golang` image
 	golang := client.Container().From("golang:latest")
@@ -34,14 +52,39 @@ func build(ctx context.Context) error {
 	// mount cloned repository into `golang` image
 	golang = golang.WithDirectory("/src", src).WithWorkdir("/src")
 
-	// define the application build command
-	golang = golang.WithExec([]string{"go", "run", "./.github/cmd/update_catalog.go"})
+	// update catalog
+	if err := updateCatalog(repoRoot); err != nil {
+		return fmt.Errorf("failed to update catalog: %w", err)
+	}
 
-	// run the commit-and-push command
-	golang = golang.WithEnvVariable("GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN"))
-	golang = golang.WithExec([]string{"go", "run", "./.github/cmd/commit_and_push.go"})
+	// commit and push changes
+	if err := commitAndPush(repoRoot); err != nil {
+		return fmt.Errorf("failed to commit and push changes: %w", err)
+	}
 
-	// execute
-	_, err = golang.Stdout(ctx)
-	return err
+	fmt.Println("Catalog updated and changes pushed successfully")
+	return nil
+}
+
+func findRepoRoot(start string) string {
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "gitspace-catalog.toml")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// We've reached the root
+			if strings.HasSuffix(dir, "gitspace-catalog") {
+				// We're likely in the GitHub Actions environment
+				return dir
+			}
+			// If we can't find the root, return the starting directory
+			return start
+		}
+		dir = parent
+	}
 }

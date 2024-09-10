@@ -10,58 +10,70 @@ import (
 	"github.com/pelletier/go-toml"
 )
 
-func main() {
-	catalog, err := loadCatalog()
-	if err != nil {
-		fmt.Println("Error loading catalog:", err)
-		os.Exit(1)
+func updateCatalog(repoRoot string) error {
+	catalogPath := filepath.Join(repoRoot, "gitspace-catalog.toml")
+
+	// Check if the file exists
+	if _, err := os.Stat(catalogPath); os.IsNotExist(err) {
+		return fmt.Errorf("gitspace-catalog.toml not found at %s", catalogPath)
 	}
 
-	updatePlugins(catalog)
-	updateTemplates(catalog)
+	catalog, err := loadCatalog(catalogPath)
+	if err != nil {
+		return fmt.Errorf("error loading catalog: %w", err)
+	}
+
+	updatePlugins(catalog, repoRoot)
+	updateTemplates(catalog, repoRoot)
 	incrementVersion(catalog)
 
-	err = saveCatalog(catalog)
+	err = saveCatalog(catalog, catalogPath)
 	if err != nil {
-		fmt.Println("Error saving catalog:", err)
-		os.Exit(1)
+		return fmt.Errorf("error saving catalog: %w", err)
 	}
 
 	fmt.Println("Catalog updated successfully")
+	return nil
 }
 
-func loadCatalog() (*toml.Tree, error) {
-	data, err := ioutil.ReadFile("gitspace-catalog.toml")
+func loadCatalog(path string) (*toml.Tree, error) {
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	return toml.LoadBytes(data)
 }
 
-func updatePlugins(catalog *toml.Tree) {
+func updatePlugins(catalog *toml.Tree, repoRoot string) {
 	plugins := make(map[string]interface{})
-	filepath.Walk("plugins", func(path string, info os.FileInfo, err error) error {
+	pluginsDir := filepath.Join(repoRoot, "plugins")
+	filepath.Walk(pluginsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			fmt.Printf("Error accessing path %q: %v\n", path, err)
+			return nil
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".toml" {
+			relPath, _ := filepath.Rel(repoRoot, path)
 			name := strings.TrimSuffix(filepath.Base(path), ".toml")
-			plugins[name] = path
+			plugins[name] = relPath
 		}
 		return nil
 	})
 	catalog.Set("plugins", plugins)
 }
 
-func updateTemplates(catalog *toml.Tree) {
+func updateTemplates(catalog *toml.Tree, repoRoot string) {
 	templates := make(map[string]interface{})
-	filepath.Walk("templates", func(path string, info os.FileInfo, err error) error {
+	templatesDir := filepath.Join(repoRoot, "templates")
+	filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			fmt.Printf("Error accessing path %q: %v\n", path, err)
+			return nil
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".toml" {
+			relPath, _ := filepath.Rel(repoRoot, path)
 			name := strings.TrimSuffix(filepath.Base(path), ".toml")
-			templates[name] = path
+			templates[name] = relPath
 		}
 		return nil
 	})
@@ -90,6 +102,6 @@ func atoi(s string) int {
 	return i
 }
 
-func saveCatalog(catalog *toml.Tree) error {
-	return ioutil.WriteFile("gitspace-catalog.toml", []byte(catalog.String()), 0644)
+func saveCatalog(catalog *toml.Tree, path string) error {
+	return ioutil.WriteFile(path, []byte(catalog.String()), 0644)
 }
