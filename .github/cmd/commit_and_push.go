@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+  "io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
@@ -33,10 +34,25 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 	// Create a new GitHub client using the App authentication
 	client := github.NewClient(&http.Client{Transport: itr})
 
+	// Log the repository information
+	fmt.Printf("Attempting to access repository: %s/%s\n", repoOwner, repoName)
+
 	// Get the current commit SHA
-	ref, _, err := client.Git.GetRef(ctx, repoOwner, repoName, "refs/heads/master")
+	ref, _, err := client.Git.GetRef(ctx, repoOwner, repoName, "heads/master")
 	if err != nil {
+		// Log more details about the error
+		fmt.Printf("Error getting ref: %v\n", err)
+		if errResp, ok := err.(*github.ErrorResponse); ok {
+			fmt.Printf("GitHub API responded with status: %s\n", errResp.Response.Status)
+			fmt.Printf("GitHub API error message: %s\n", errResp.Message)
+		}
 		return fmt.Errorf("error getting ref: %w", err)
+	}
+
+	// Read the updated catalog content
+	catalogContent, err := ioutil.ReadFile("gitspace-catalog.toml")
+	if err != nil {
+		return fmt.Errorf("error reading updated catalog file: %w", err)
 	}
 
 	// Create a new tree with the updated catalog file
@@ -45,7 +61,7 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 			Path:    github.String("gitspace-catalog.toml"),
 			Mode:    github.String("100644"),
 			Type:    github.String("blob"),
-			Content: github.String("Your updated catalog content here"),
+			Content: github.String(string(catalogContent)),
 		},
 	})
 	if err != nil {
@@ -71,7 +87,6 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 		return fmt.Errorf("error updating ref: %w", err)
 	}
 
+	fmt.Println("Successfully committed and pushed changes")
 	return nil
 }
-
-

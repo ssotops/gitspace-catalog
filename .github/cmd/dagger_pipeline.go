@@ -57,12 +57,20 @@ func build(ctx context.Context) error {
 		return fmt.Errorf("failed to update catalog: %w", err)
 	}
 
-	// commit and push changes
+	// In the build function
 	repoOwner := os.Getenv("GITHUB_REPOSITORY_OWNER")
 	repoName := os.Getenv("GITHUB_REPOSITORY")
 	if repoOwner == "" || repoName == "" {
 		return fmt.Errorf("GITHUB_REPOSITORY_OWNER or GITHUB_REPOSITORY environment variables are not set")
 	}
+
+	// If GITHUB_REPOSITORY includes the owner, split it
+	if strings.Contains(repoName, "/") {
+		parts := strings.SplitN(repoName, "/", 2)
+		repoOwner = parts[0]
+		repoName = parts[1]
+	}
+
 	if err := commitAndPush(ctx, repoOwner, repoName); err != nil {
 		return fmt.Errorf("failed to commit and push changes: %w", err)
 	}
