@@ -58,7 +58,12 @@ func build(ctx context.Context) error {
 	}
 
 	// commit and push changes
-	if err := commitAndPush(repoRoot); err != nil {
+	repoOwner := os.Getenv("GITHUB_REPOSITORY_OWNER")
+	repoName := os.Getenv("GITHUB_REPOSITORY")
+	if repoOwner == "" || repoName == "" {
+		return fmt.Errorf("GITHUB_REPOSITORY_OWNER or GITHUB_REPOSITORY environment variables are not set")
+	}
+	if err := commitAndPush(ctx, repoOwner, repoName); err != nil {
 		return fmt.Errorf("failed to commit and push changes: %w", err)
 	}
 

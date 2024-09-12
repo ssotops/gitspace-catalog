@@ -3,20 +3,32 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
-	"time"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v45/github"
 )
 
 func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
-	appID := os.Getenv("APP_ID")
-	installationID := os.Getenv("INSTALLATION_ID") // You'll need to add this to your secrets
+	appID, err := strconv.ParseInt(os.Getenv("APP_ID"), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid APP_ID: %w", err)
+	}
+
+	installationID, err := strconv.ParseInt(os.Getenv("INSTALLATION_ID"), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid INSTALLATION_ID: %w", err)
+	}
+
 	privateKey := []byte(os.Getenv("APP_PRIVATE_KEY"))
 
 	// Create a new transport using the GitHub App authentication
-	itr, err := ghinstallation.New(nil, appID, installationID, privateKey)
+	itr, err := ghinstallation.New(http.DefaultTransport, appID, installationID, privateKey)
 	if err != nil {
 		return fmt.Errorf("error creating GitHub App transport: %w", err)
 	}
@@ -31,12 +43,12 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 	}
 
 	// Create a new tree with the updated catalog file
-	tree, _, err := client.Git.CreateTree(ctx, repoOwner, repoName, *ref.Object.SHA, []github.TreeEntry{
+	tree, _, err := client.Git.CreateTree(ctx, repoOwner, repoName, *ref.Object.SHA, []*github.TreeEntry{
 		{
 			Path:    github.String("gitspace-catalog.toml"),
 			Mode:    github.String("100644"),
 			Type:    github.String("blob"),
-			Content: github.String( /* Read your updated catalog content here */ ),
+			Content: github.String("Your updated catalog content here"),
 		},
 	})
 	if err != nil {

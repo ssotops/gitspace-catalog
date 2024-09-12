@@ -3,9 +3,9 @@ name: Update Catalog
 on:
   push:
     branches:
-      - master
       - main
     paths:
+      - '.github/**'
       - 'plugins/**'
       - 'templates/**'
 
@@ -14,19 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v4
         with:
           go-version: '1.23'
-
-      - name: Install dependencies
-        run: |
-          cd .github
-          go mod download
 
       - name: Install Dagger
         run: |
@@ -39,4 +34,8 @@ jobs:
           cd .github
           go run ./cmd/*.go
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_ID: ${{ secrets.APP_ID }}
+          INSTALLATION_ID: ${{ secrets.INSTALLATION_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
