@@ -34,7 +34,7 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 	client := github.NewClient(&http.Client{Transport: itr})
 
 	// Get the current commit SHA
-	ref, _, err := client.Git.GetRef(ctx, repoOwner, repoName, "refs/heads/main")
+	ref, _, err := client.Git.GetRef(ctx, repoOwner, repoName, "refs/heads/master")
 	if err != nil {
 		return fmt.Errorf("error getting ref: %w", err)
 	}
@@ -64,7 +64,7 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 
 	// Update the reference
 	_, _, err = client.Git.UpdateRef(ctx, repoOwner, repoName, &github.Reference{
-		Ref:    github.String("refs/heads/main"),
+		Ref:    github.String("refs/heads/master"),
 		Object: &github.GitObject{SHA: commit.SHA},
 	}, false)
 	if err != nil {
