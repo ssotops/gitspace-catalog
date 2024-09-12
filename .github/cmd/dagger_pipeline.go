@@ -57,7 +57,14 @@ func build(ctx context.Context) error {
 		return fmt.Errorf("failed to update catalog: %w", err)
 	}
 
-	// In the build function
+	// Verify catalog file exists and print its content
+	content, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return fmt.Errorf("failed to read catalog file after update: %w", err)
+	}
+	fmt.Printf("Catalog file content after update:\n%s\n", string(content))
+
+	// Get repository owner and name
 	repoOwner := os.Getenv("GITHUB_REPOSITORY_OWNER")
 	repoName := os.Getenv("GITHUB_REPOSITORY")
 	if repoOwner == "" || repoName == "" {
@@ -71,6 +78,7 @@ func build(ctx context.Context) error {
 		repoName = parts[1]
 	}
 
+	// commit and push changes
 	if err := commitAndPush(ctx, repoOwner, repoName); err != nil {
 		return fmt.Errorf("failed to commit and push changes: %w", err)
 	}

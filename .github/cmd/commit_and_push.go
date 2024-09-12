@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-  "io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
@@ -50,7 +50,16 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 	}
 
 	// Read the updated catalog content
-	catalogContent, err := ioutil.ReadFile("gitspace-catalog.toml")
+	pwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("error getting current working directory: %w", err)
+	}
+	fmt.Printf("Current working directory: %s\n", pwd)
+
+	catalogPath := filepath.Join(pwd, "gitspace-catalog.toml")
+	fmt.Printf("Attempting to read catalog from: %s\n", catalogPath)
+
+	catalogContent, err := os.ReadFile(catalogPath)
 	if err != nil {
 		return fmt.Errorf("error reading updated catalog file: %w", err)
 	}
