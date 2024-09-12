@@ -1,38 +1,67 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"os"
+	"time"
+
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	"github.com/google/go-github/v45/github"
 )
 
-func commitAndPush(repoRoot string) error {
-	if err := gitConfig(); err != nil {
-		return fmt.Errorf("error configuring git: %w", err)
+func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
+	appID := os.Getenv("APP_ID")
+	installationID := os.Getenv("INSTALLATION_ID") // You'll need to add this to your secrets
+	privateKey := []byte(os.Getenv("APP_PRIVATE_KEY"))
+
+	// Create a new transport using the GitHub App authentication
+	itr, err := ghinstallation.New(nil, appID, installationID, privateKey)
+	if err != nil {
+		return fmt.Errorf("error creating GitHub App transport: %w", err)
 	}
 
-	if err := gitAdd(repoRoot); err != nil {
-		return fmt.Errorf("error adding files: %w", err)
+	// Create a new GitHub client using the App authentication
+	client := github.NewClient(&http.Client{Transport: itr})
+
+	// Get the current commit SHA
+	ref, _, err := client.Git.GetRef(ctx, repoOwner, repoName, "refs/heads/main")
+	if err != nil {
+		return fmt.Errorf("error getting ref: %w", err)
 	}
 
-	// Check if there are changes to commit
-	if hasChanges, err := gitHasChanges(repoRoot); err != nil {
-		return fmt.Errorf("error checking for changes: %w", err)
-	} else if !hasChanges {
-		fmt.Println("No changes to commit")
-		return nil
+	// Create a new tree with the updated catalog file
+	tree, _, err := client.Git.CreateTree(ctx, repoOwner, repoName, *ref.Object.SHA, []github.TreeEntry{
+		{
+			Path:    github.String("gitspace-catalog.toml"),
+			Mode:    github.String("100644"),
+			Type:    github.String("blob"),
+			Content: github.String( /* Read your updated catalog content here */ ),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error creating tree: %w", err)
 	}
 
-	if err := gitCommit(); err != nil {
-		return fmt.Errorf("error committing changes: %w", err)
+	// Create a new commit
+	commit, _, err := client.Git.CreateCommit(ctx, repoOwner, repoName, &github.Commit{
+		Message: github.String("Update gitspace-catalog.toml"),
+		Tree:    tree,
+		Parents: []*github.Commit{{SHA: ref.Object.SHA}},
+	})
+	if err != nil {
+		return fmt.Errorf("error creating commit: %w", err)
 	}
 
-	if err := gitPush(); err != nil {
-		return fmt.Errorf("error pushing changes: %w", err)
+	// Update the reference
+	_, _, err = client.Git.UpdateRef(ctx, repoOwner, repoName, &github.Reference{
+		Ref:    github.String("refs/heads/main"),
+		Object: &github.GitObject{SHA: commit.SHA},
+	}, false)
+	if err != nil {
+		return fmt.Errorf("error updating ref: %w", err)
 	}
 
-	fmt.Println("Changes committed and pushed successfully")
 	return nil
 }
 
