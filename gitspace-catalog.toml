@@ -1,14 +1,14 @@
 [catalog]
-name = "Gitspace Official Catalog"
 description = "Official catalog of plugins and templates for Gitspace"
-version = "0.1.5"
-last_updated = { date = "2024-09-13T01:02:45Z", commit_hash = "placeholder_hash" }
+version = "0.1.6"
+last_updated = { date = "2024-09-13T17:31:12Z", commit_hash = "placeholder_hash" }
+name = "Gitspace Official Catalog"
 
 [plugins]
 [plugins.templater]
-description = "A Gitspace plugin"
-path = "plugins/templater"
 version = "0.1.0"
+description = "Template manager for gitspace"
+path = "plugins/templater"
 
 [templates]
 [templates.gitspace-catalog-starter]
@@ -17,7 +17,7 @@ description = "A starter template for creating a Gitspace catalog"
 path = "templates/gitspace-catalog-starter"
 
 [templates.gitspace-plugin-starter]
-path = "templates/gitspace-plugin-starter"
 version = "0.1.0"
 description = "A starter template for creating a Gitspace plugin"
+path = "templates/gitspace-plugin-starter"
 
