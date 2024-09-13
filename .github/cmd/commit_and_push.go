@@ -51,7 +51,7 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string, repoRoot str
 
 	// Read the updated catalog content
 	fmt.Printf("Repository root: %s\n", repoRoot)
-	catalogPath := filepath.Join(repoRoot, "..", "gitspace-catalog.toml")
+	catalogPath := filepath.Join(repoRoot, "gitspace-catalog.toml")
 	fmt.Printf("Attempting to read catalog from: %s\n", catalogPath)
 
 	catalogContent, err := os.ReadFile(catalogPath)

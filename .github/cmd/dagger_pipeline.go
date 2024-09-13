@@ -33,8 +33,8 @@ func build(ctx context.Context) error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// determine the repository root
-	repoRoot := findRepoRoot(wd)
+	// determine the repository root (parent of .github)
+	repoRoot := filepath.Dir(wd)
 	fmt.Printf("Repository root: %s\n", repoRoot)
 
 	// Check if gitspace-catalog.toml exists
