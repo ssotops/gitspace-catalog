@@ -30,6 +30,9 @@ func updateCatalog(repoRoot string) error {
 	incrementVersion(catalog)
 	updateLastUpdated(catalog)
 
+	// Convert absolute paths to relative paths
+	convertToRelativePaths(catalog, repoRoot)
+
 	fmt.Println("Updated catalog content:")
 	updatedContent := formatTomlTree(catalog)
 	fmt.Println(updatedContent)
@@ -45,6 +48,26 @@ func updateCatalog(repoRoot string) error {
 
 	fmt.Println("Catalog updated successfully")
 	return nil
+}
+
+func convertToRelativePaths(catalog *toml.Tree, repoRoot string) {
+	convertSection := func(sectionName string) {
+		if section, ok := catalog.Get(sectionName).(*toml.Tree); ok {
+			for _, key := range section.Keys() {
+				if item, ok := section.Get(key).(*toml.Tree); ok {
+					if path, ok := item.Get("path").(string); ok {
+						relPath, err := filepath.Rel(repoRoot, path)
+						if err == nil {
+							item.Set("path", relPath)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	convertSection("plugins")
+	convertSection("templates")
 }
 
 func loadCatalog(path string) (*toml.Tree, error) {
