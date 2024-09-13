@@ -1,0 +1,30 @@
+[template]
+name = "gitspace-catalog-starter"
+version = "0.1.0"
+description = "A starter template for creating a Gitspace catalog"
+author = "Gitspace Team"
+license = "MIT"
+
+[template.dependencies]
+go = ">=1.16"
+
+[template.variables]
+catalog_name = { type = "string", description = "Name of the catalog", default = "My Gitspace Catalog" }
+catalog_description = { type = "string", description = "Description of the catalog", default = "A custom catalog for Gitspace plugins and templates" }
+
+[template.hooks]
+pre_render = "scripts/pre_render.sh"
+post_render = "scripts/post_render.sh"
+
+[template.files]
+include = [
+    "gitspace-catalog.toml",
+    "gitspace-plugin.toml",
+    "plugins/**/*",
+    "templates/**/*"
+]
+exclude = ["**/*.tmp", "*.log"]
+
+[template.structure]
+plugins_dir = "plugins"
+templates_dir = "templates"

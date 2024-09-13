@@ -1,0 +1,34 @@
+[template]
+name = "gitspace-plugin-starter"
+version = "0.1.0"
+description = "A starter template for creating a Gitspace plugin"
+author = "Gitspace Team"
+license = "MIT"
+
+[template.dependencies]
+go = ">=1.16"
+
+[template.variables]
+plugin_name = { type = "string", description = "Name of the plugin" }
+plugin_description = { type = "string", description = "Short description of the plugin" }
+author_name = { type = "string", description = "Name of the plugin author" }
+
+[template.hooks]
+pre_render = "scripts/pre_render.sh"
+post_render = "scripts/post_render.sh"
+
+[template.files]
+include = [
+    "README.md",
+    "build.sh",
+    "gitspace-plugin.toml",
+    "go.mod",
+    "plugin.go",
+    "plugin_test.go",
+    "test.sh"
+]
+exclude = ["**/*.tmp", "*.log"]
+
+[template.commands]
+build = "sh build.sh"
+test = "sh test.sh"
