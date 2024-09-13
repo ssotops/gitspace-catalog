@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-github/v45/github"
 )
 
-func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
+func commitAndPush(ctx context.Context, repoOwner, repoName string, repoRoot string) error {
 	appID, err := strconv.ParseInt(os.Getenv("APP_ID"), 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid APP_ID: %w", err)
@@ -50,13 +50,8 @@ func commitAndPush(ctx context.Context, repoOwner, repoName string) error {
 	}
 
 	// Read the updated catalog content
-	pwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("error getting current working directory: %w", err)
-	}
-	fmt.Printf("Current working directory: %s\n", pwd)
-
-	catalogPath := filepath.Join(pwd, "gitspace-catalog.toml")
+	fmt.Printf("Repository root: %s\n", repoRoot)
+	catalogPath := filepath.Join(repoRoot, "..", "gitspace-catalog.toml")
 	fmt.Printf("Attempting to read catalog from: %s\n", catalogPath)
 
 	catalogContent, err := os.ReadFile(catalogPath)

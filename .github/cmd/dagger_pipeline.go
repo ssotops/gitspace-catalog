@@ -79,33 +79,10 @@ func build(ctx context.Context) error {
 	}
 
 	// commit and push changes
-	if err := commitAndPush(ctx, repoOwner, repoName); err != nil {
+	if err := commitAndPush(ctx, repoOwner, repoName, repoRoot); err != nil {
 		return fmt.Errorf("failed to commit and push changes: %w", err)
 	}
 
 	fmt.Println("Catalog updated and changes pushed successfully")
 	return nil
-}
-
-func findRepoRoot(start string) string {
-	dir := start
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "gitspace-catalog.toml")); err == nil {
-			return dir
-		}
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// We've reached the root
-			if strings.HasSuffix(dir, "gitspace-catalog") {
-				// We're likely in the GitHub Actions environment
-				return dir
-			}
-			// If we can't find the root, return the starting directory
-			return start
-		}
-		dir = parent
-	}
 }
