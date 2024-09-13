@@ -1,8 +1,8 @@
 [plugin]
-name = "gitspace-plugin-templates"
+name = "templater"
 version = "0.1.0"
-description = "A Gitspace plugin"
-author = "Your Organization"
+description = "Template manager for gitspace"
+author = "ssotops"
 
 [[plugin.sources]]
 path = "plugin.go"
