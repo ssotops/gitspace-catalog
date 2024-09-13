@@ -146,17 +146,20 @@ func updatePlugins(catalog *toml.Tree, repoRoot string) {
 
 func loadPluginInfo(pluginDir string) (map[string]interface{}, error) {
 	tomlPath := filepath.Join(pluginDir, "gitspace-plugin.toml")
-	fmt.Printf("Loading plugin info from: %s\n", tomlPath)
+
 	tree, err := toml.LoadFile(tomlPath)
 	if err != nil {
 		return nil, fmt.Errorf("error loading plugin TOML: %w", err)
 	}
 
 	info := make(map[string]interface{})
-	info["version"] = tree.Get("plugin.version")
-	info["description"] = tree.Get("plugin.description")
+	if tree.Has("plugin") {
+		pluginInfo := tree.Get("plugin").(*toml.Tree)
+		info["version"] = pluginInfo.Get("version")
+		info["description"] = pluginInfo.Get("description")
+	}
 	info["path"] = pluginDir
-	fmt.Printf("Loaded plugin info: %v\n", info)
+
 	return info, nil
 }
 
@@ -194,29 +197,35 @@ func updateTemplates(catalog *toml.Tree, repoRoot string) {
 }
 
 func loadTemplateInfo(templateDir string) (map[string]interface{}, error) {
+	templateTomlPath := filepath.Join(templateDir, "gitspace-template.toml")
+	pluginTomlPath := filepath.Join(templateDir, "gitspace-plugin.toml")
+
 	var tomlPath string
-	if _, err := os.Stat(filepath.Join(templateDir, "gitspace-catalog.toml")); err == nil {
-		tomlPath = filepath.Join(templateDir, "gitspace-catalog.toml")
+	if _, err := os.Stat(templateTomlPath); err == nil {
+		tomlPath = templateTomlPath
+	} else if _, err := os.Stat(pluginTomlPath); err == nil {
+		tomlPath = pluginTomlPath
 	} else {
-		tomlPath = filepath.Join(templateDir, "gitspace-plugin.toml")
+		return nil, fmt.Errorf("neither gitspace-template.toml nor gitspace-plugin.toml found in %s", templateDir)
 	}
 
-	fmt.Printf("Loading template info from: %s\n", tomlPath)
 	tree, err := toml.LoadFile(tomlPath)
 	if err != nil {
-		return nil, fmt.Errorf("error loading template TOML: %w", err)
+		return nil, fmt.Errorf("error loading TOML file: %w", err)
 	}
 
 	info := make(map[string]interface{})
 	if tree.Has("template") {
-		info["version"] = tree.Get("template.version")
-		info["description"] = tree.Get("template.description")
+		templateInfo := tree.Get("template").(*toml.Tree)
+		info["version"] = templateInfo.Get("version")
+		info["description"] = templateInfo.Get("description")
 	} else if tree.Has("plugin") {
-		info["version"] = tree.Get("plugin.version")
-		info["description"] = tree.Get("plugin.description")
+		pluginInfo := tree.Get("plugin").(*toml.Tree)
+		info["version"] = pluginInfo.Get("version")
+		info["description"] = pluginInfo.Get("description")
 	}
 	info["path"] = templateDir
-	fmt.Printf("Loaded template info: %v\n", info)
+
 	return info, nil
 }
 
