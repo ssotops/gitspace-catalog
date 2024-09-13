@@ -1,21 +1,21 @@
 [catalog]
 name = "Gitspace Official Catalog"
 description = "Official catalog of plugins and templates for Gitspace"
-version = "0.1.1"
-last_updated = { date = "2024-09-09T21:25:40-07:00", commit_hash = "placeholder_hash" }
+version = "0.1.2"
+last_updated = { date = "2024-09-13T00:19:52Z", commit_hash = "placeholder_hash" }
 
 [plugins]
-[plugins.templates]
+[plugins.templater]
 version = "0.1.0"
 description = "A Gitspace plugin"
-path = "/Users/alechp/.ssot/gitspace/.repositories/github.com/ssotops/gitspace-catalog/plugins/templates"
+path = "/home/runner/work/gitspace-catalog/gitspace-catalog/plugins/templater"
 
 [templates]
 [templates.gitspace-plugin-starter]
 version = "0.1.0"
 description = "A Gitspace plugin"
-path = "/Users/alechp/.ssot/gitspace/.repositories/github.com/ssotops/gitspace-catalog/templates/gitspace-plugin-starter"
+path = "/home/runner/work/gitspace-catalog/gitspace-catalog/templates/gitspace-plugin-starter"
 
 [templates.gitspace-catalog-starter]
-path = "/Users/alechp/.ssot/gitspace/.repositories/github.com/ssotops/gitspace-catalog/templates/gitspace-catalog-starter"
+path = "/home/runner/work/gitspace-catalog/gitspace-catalog/templates/gitspace-catalog-starter"
 
