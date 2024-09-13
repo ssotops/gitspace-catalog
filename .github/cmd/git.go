@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-func gitConfig() error {
-	cmd := exec.Command("git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com")
-	if err := cmd.Run(); err != nil {
-		return err
-	}
+// func gitConfig() error {
+// 	cmd := exec.Command("git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com")
+// 	if err := cmd.Run(); err != nil {
+// 		return err
+// 	}
 
-	cmd = exec.Command("git", "config", "--global", "user.name", "GitHub Actions")
-	return cmd.Run()
-}
+// 	cmd = exec.Command("git", "config", "--global", "user.name", "GitHub Actions")
+// 	return cmd.Run()
+// }
 
 func gitAdd(repoRoot string) error {
 	cmd := exec.Command("git", "add", filepath.Join(repoRoot, "gitspace-catalog.toml"))
