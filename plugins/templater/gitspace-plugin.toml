@@ -1,3 +1,4 @@
+[plugin]
 name = "templater"
 version = "0.2.0"
 description = "Template manager for gitspace"
