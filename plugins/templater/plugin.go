@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/log"
-  "github.com/ssotops/gitspace/gsplugin"
+	"github.com/ssotops/gitspace/gsplugin"
 )
 
 type TemplaterPlugin struct {
@@ -15,35 +15,25 @@ type TemplaterPlugin struct {
 
 var Plugin TemplaterPlugin
 
-func init() {
-	// Load configuration from gitspace-plugin.toml
-	// This is a simplified version; you'd need to implement actual TOML parsing
-	Plugin.config = gsplugin.PluginConfig{
-		Name:        "templater",
-		Version:     "0.2.0",
-		Description: "Template manager for gitspace",
-		Author:      "ssotops",
-		Tags:        []string{"templates", "code-generation"},
-		Menu: struct {
-			Title string `toml:"title"`
-			Key   string `toml:"key"`
-		}{
-			Title: "Templates",
-			Key:   "templates",
-		},
+func (p *TemplaterPlugin) Name() string {
+	if p.config.Metadata.Name != "" {
+		return p.config.Metadata.Name
 	}
+	return "templater"
 }
 
-func (p TemplaterPlugin) Name() string {
-	return p.config.Name
+func (p *TemplaterPlugin) Version() string {
+	if p.config.Metadata.Version != "" {
+		return p.config.Metadata.Version
+	}
+	return "0.2.0"
 }
 
-func (p TemplaterPlugin) Version() string {
-	return p.config.Version
-}
-
-func (p TemplaterPlugin) Description() string {
-	return p.config.Description
+func (p *TemplaterPlugin) Description() string {
+	if p.config.Metadata.Description != "" {
+		return p.config.Metadata.Description
+	}
+	return "Template manager for gitspace"
 }
 
 func (p TemplaterPlugin) Run(logger *log.Logger) error {
@@ -53,8 +43,8 @@ func (p TemplaterPlugin) Run(logger *log.Logger) error {
 
 func (p TemplaterPlugin) GetMenuOption() *huh.Option[string] {
 	return &huh.Option[string]{
-		Key:   p.config.Menu.Key,
-		Value: p.config.Menu.Title,
+		Key:   "templates",
+		Value: "Templates",
 	}
 }
 
@@ -65,8 +55,7 @@ func (p TemplaterPlugin) Standalone(args []string) error {
 	return p.handleTemplatesMenu(logger)
 }
 
-// Add this method to satisfy the GitspacePlugin interface
-func (p TemplaterPlugin) SetConfig(config gsplugin.PluginConfig) {
+func (p *TemplaterPlugin) SetConfig(config gsplugin.PluginConfig) {
 	p.config = config
 }
 
