@@ -1,10 +1,11 @@
-module github.com/ssotops/gitspace-plugin-templates
+module github.com/ssotops/gitspace-catalog/plugins/templater
 
 go 1.23.0
 
 require (
 	github.com/charmbracelet/huh v0.6.0
 	github.com/charmbracelet/log v0.4.0
+  github.com/ssotops/gitspace v1.0.33
 )
 
 require (

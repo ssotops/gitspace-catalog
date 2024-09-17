@@ -2,29 +2,72 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/log"
+	"github.com/ssotops/gitspace/plugin"
 )
 
-type GitspacePluginTemplates struct{}
-
-func (p *GitspacePluginTemplates) GetMenuOption() huh.Option[string] {
-	return huh.NewOption("Templates", "templates")
+type TemplaterPlugin struct {
+	config plugin.PluginConfig
 }
 
-func (p *GitspacePluginTemplates) HandleMenuChoice(logger *log.Logger) error {
+var Plugin TemplaterPlugin
+
+func init() {
+	// Load configuration from gitspace-plugin.toml
+	// This is a simplified version; you'd need to implement actual TOML parsing
+	Plugin.config = plugin.PluginConfig{
+		Metadata: plugin.PluginMetadata{
+			Name:        "templater",
+			Version:     "0.2.0",
+			Description: "Template manager for gitspace",
+			Author:      "ssotops",
+			Tags:        []string{"templates", "code-generation"},
+		},
+		Menu: struct {
+			Title string `toml:"title"`
+			Key   string `toml:"key"`
+		}{
+			Title: "Templates",
+			Key:   "templates",
+		},
+	}
+}
+
+func (p TemplaterPlugin) Name() string {
+	return p.config.Metadata.Name
+}
+
+func (p TemplaterPlugin) Version() string {
+	return p.config.Metadata.Version
+}
+
+func (p TemplaterPlugin) Description() string {
+	return p.config.Metadata.Description
+}
+
+func (p TemplaterPlugin) Run(logger *log.Logger) error {
+	logger.Info("Running templater plugin")
 	return p.handleTemplatesMenu(logger)
 }
 
-func (p *GitspacePluginTemplates) Name() string {
-	return "gitspace-plugin-templates"
+func (p TemplaterPlugin) GetMenuOption() *huh.Option[string] {
+	return &huh.Option[string]{
+		Key:   p.config.Menu.Key,
+		Value: p.config.Menu.Title,
+	}
 }
 
-func (p *GitspacePluginTemplates) Version() string {
-	return "0.1.0"
+func (p TemplaterPlugin) Standalone(args []string) error {
+	logger := log.New(os.Stderr)
+	logger.SetLevel(log.DebugLevel)
+	logger.Info("Running templater plugin in standalone mode")
+	return p.handleTemplatesMenu(logger)
 }
 
-func (p *GitspacePluginTemplates) handleTemplatesMenu(logger *log.Logger) error {
+func (p TemplaterPlugin) handleTemplatesMenu(logger *log.Logger) error {
 	for {
 		var choice string
 		err := huh.NewSelect[string]().
@@ -57,20 +100,24 @@ func (p *GitspacePluginTemplates) handleTemplatesMenu(logger *log.Logger) error 
 	}
 }
 
-func (p *GitspacePluginTemplates) listTemplates(logger *log.Logger) {
+func (p TemplaterPlugin) listTemplates(logger *log.Logger) {
 	logger.Info("Listing available templates...")
 	// Implement logic to list templates
 }
 
-func (p *GitspacePluginTemplates) createTemplate(logger *log.Logger) {
+func (p TemplaterPlugin) createTemplate(logger *log.Logger) {
 	logger.Info("Creating a new template...")
 	// Implement logic to create a new template
 }
 
-func (p *GitspacePluginTemplates) applyTemplate(logger *log.Logger) {
+func (p TemplaterPlugin) applyTemplate(logger *log.Logger) {
 	logger.Info("Applying a template to a repository...")
 	// Implement logic to apply a template
 }
 
-// This is the symbol that will be looked up by the plugin system
-var Plugin GitspacePluginTemplates
+func main() {
+	if err := Plugin.Standalone(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
