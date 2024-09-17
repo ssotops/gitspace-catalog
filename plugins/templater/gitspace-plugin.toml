@@ -1,16 +1,13 @@
-[plugin]
 name = "templater"
 version = "0.2.0"
 description = "Template manager for gitspace"
 author = "ssotops"
-
-[metadata]
 tags = ["templates", "code-generation"]
 
 [menu]
 title = "Templates"
 key = "templates"
 
-[[plugin.sources]]
+[[sources]]
 path = "plugin.go"
 entry_point = "Plugin"
