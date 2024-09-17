@@ -6,22 +6,11 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/log"
+  "github.com/ssotops/gitspace/gsplugin"
 )
 
-type PluginConfig struct {
-	Name        string   `toml:"name"`
-	Version     string   `toml:"version"`
-	Description string   `toml:"description"`
-	Author      string   `toml:"author"`
-	Tags        []string `toml:"tags"`
-	Menu        struct {
-		Title string `toml:"title"`
-		Key   string `toml:"key"`
-	} `toml:"menu"`
-}
-
 type TemplaterPlugin struct {
-	config PluginConfig
+	config gsplugin.PluginConfig
 }
 
 var Plugin TemplaterPlugin
@@ -29,7 +18,7 @@ var Plugin TemplaterPlugin
 func init() {
 	// Load configuration from gitspace-plugin.toml
 	// This is a simplified version; you'd need to implement actual TOML parsing
-	Plugin.config = PluginConfig{
+	Plugin.config = gsplugin.PluginConfig{
 		Name:        "templater",
 		Version:     "0.2.0",
 		Description: "Template manager for gitspace",
@@ -77,7 +66,7 @@ func (p TemplaterPlugin) Standalone(args []string) error {
 }
 
 // Add this method to satisfy the GitspacePlugin interface
-func (p TemplaterPlugin) SetConfig(config PluginConfig) {
+func (p TemplaterPlugin) SetConfig(config gsplugin.PluginConfig) {
 	p.config = config
 }
 
