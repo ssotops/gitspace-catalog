@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+  "runtime"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/log"
@@ -112,4 +117,45 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func (p *TemplaterPlugin) GetDependencies() map[string]string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return nil
+	}
+	pluginDir := filepath.Dir(filename)
+
+	cmd := exec.Command("go", "list", "-m", "-json", "all")
+	cmd.Dir = pluginDir
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var modules []struct {
+		Path    string
+		Version string
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	for decoder.More() {
+		var module struct {
+			Path    string
+			Version string
+		}
+		if err := decoder.Decode(&module); err != nil {
+			return nil
+		}
+		modules = append(modules, module)
+	}
+
+	dependencies := make(map[string]string)
+	for _, module := range modules {
+		if module.Path != "github.com/ssotops/gitspace-catalog/plugins/templater" { // Exclude the main module
+			dependencies[module.Path] = module.Version
+		}
+	}
+
+	return dependencies
 }
