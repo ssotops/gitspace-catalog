@@ -6,11 +6,11 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/log"
-	"github.com/ssotops/gitspace/gsplugin"
+	"github.com/ssotops/gitspace-plugin"
 )
 
 type TemplaterPlugin struct {
-	config gsplugin.PluginConfig
+	config gitspace_plugin.PluginConfig
 }
 
 var Plugin TemplaterPlugin
@@ -55,7 +55,7 @@ func (p TemplaterPlugin) Standalone(args []string) error {
 	return p.handleTemplatesMenu(logger)
 }
 
-func (p *TemplaterPlugin) SetConfig(config gsplugin.PluginConfig) {
+func (p *TemplaterPlugin) SetConfig(config gitspace_plugin.PluginConfig) {
 	p.config = config
 }
 

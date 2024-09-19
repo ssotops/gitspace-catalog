@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 PLUGIN_NAME="templater"
 PLUGIN_DIR="."
 OUTPUT_DIR="./dist"
@@ -59,11 +57,46 @@ gum style \
     --align center --width 70 --margin "1 2" --padding "1 2" \
     "${PLUGIN_NAME} Plugin Builder"
 
+# Function to run command and check for errors
+run_command() {
+    local cmd="$1"
+    echo "Running: $cmd"
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        gum style \
+            --foreground 196 --border-foreground 196 --border normal \
+            --align left --width 70 --margin "1 2" --padding "1 2" \
+            "Command failed: $cmd\nError output:\n$output"
+        return 1
+    fi
+    echo "$output"
+    return 0
+}
+
+# Update dependencies
+if ! run_command "go mod tidy"; then
+    exit 1
+fi
+
 # Build standalone binary
-gum spin --spinner dot --title "Building standalone binary..." -- bash -c 'go build -o "$OUTPUT_DIR/${PLUGIN_NAME}" "$PLUGIN_DIR" 2>&1 || echo "Build failed: $?"'
+if ! run_command "go build -o \"$OUTPUT_DIR/${PLUGIN_NAME}\" \"$PLUGIN_DIR\""; then
+    exit 1
+fi
 
 # Build plugin .so file
-gum spin --spinner dot --title "Building plugin .so file..." -- bash -c 'go build -buildmode=plugin -o "$OUTPUT_DIR/${PLUGIN_NAME}.so" "$PLUGIN_DIR" 2>&1 || echo "Build failed: $?"'
+if ! run_command "go build -buildmode=plugin -o \"$OUTPUT_DIR/${PLUGIN_NAME}.so\" \"$PLUGIN_DIR\""; then
+    exit 1
+fi
+
+# Check if files were actually created
+if [ ! -f "$OUTPUT_DIR/${PLUGIN_NAME}" ] || [ ! -f "$OUTPUT_DIR/${PLUGIN_NAME}.so" ]; then
+    gum style \
+        --foreground 196 --border-foreground 196 --border normal \
+        --align center --width 70 --margin "1 2" --padding "1 2" \
+        "Build failed: Output files were not created."
+    exit 1
+fi
 
 # Print summary
 gum style \
@@ -72,12 +105,3 @@ gum style \
     "Build complete!
 Standalone binary: $OUTPUT_DIR/${PLUGIN_NAME}
 Plugin .so file: $OUTPUT_DIR/${PLUGIN_NAME}.so"
-
-# Check for build errors
-if [ $? -ne 0 ]; then
-    gum style \
-        --foreground 196 --border-foreground 196 --border normal \
-        --align center --width 70 --margin "1 2" --padding "1 2" \
-        "Build failed. Please check the error messages above."
-    exit 1
-fi
