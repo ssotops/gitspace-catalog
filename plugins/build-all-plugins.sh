@@ -20,6 +20,7 @@ error() {
 # Function to set up plugin dependencies
 setup_plugin_dependencies() {
     local plugin_dir="$1"
+    local plugin_name="$2"
     (
         cd "$plugin_dir"
         if [ ! -f "go.mod" ]; then
@@ -46,13 +47,30 @@ install_plugin() {
     log "Installed $plugin_name to $install_dir"
 }
 
+# Function to update root .gitignore
+update_gitignore() {
+    local plugin_name="$1"
+    local gitignore_file="$(git rev-parse --show-toplevel)/.gitignore"
+    
+    # Create .gitignore if it doesn't exist
+    touch "$gitignore_file"
+    
+    # Check if the binary is already in .gitignore
+    if ! grep -q "^plugins/$plugin_name/$plugin_name$" "$gitignore_file"; then
+        echo "plugins/$plugin_name/$plugin_name" >> "$gitignore_file"
+        log "Added $plugin_name binary to root .gitignore"
+    else
+        log "$plugin_name binary already in root .gitignore"
+    fi
+}
+
 # Build all plugins in the catalog
 build_plugins() {
     for plugin_dir in */; do
         if [ -d "$plugin_dir" ]; then
             plugin_name=${plugin_dir%/}
             log "Setting up dependencies for plugin: $plugin_name"
-            setup_plugin_dependencies "$plugin_dir"
+            setup_plugin_dependencies "$plugin_dir" "$plugin_name"
             
             log "Building plugin: $plugin_name"
             (
@@ -61,6 +79,7 @@ build_plugins() {
                 if [ $? -eq 0 ]; then
                     success "Plugin $plugin_name built successfully."
                     install_plugin "$plugin_name" "$plugin_name"
+                    update_gitignore "$plugin_name"
                 else
                     error "Failed to build plugin $plugin_name."
                     exit 1
@@ -70,31 +89,8 @@ build_plugins() {
     done
 }
 
-# Update gitspace-catalog.toml
-update_catalog() {
-    log "Updating gitspace-catalog.toml"
-    local catalog_file="../gitspace-catalog.toml"
-    
-    if [ ! -f "$catalog_file" ]; then
-        error "gitspace-catalog.toml not found at $catalog_file"
-        return 1
-    fi
-
-    # Update the catalog version and last updated date
-    sed -i.bak "s/version = .*/version = \"$(date +%Y.%m.%d)\"/" "$catalog_file"
-    sed -i.bak "s/date = .*/date = \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"/" "$catalog_file"
-    
-    # Update commit hash
-    local commit_hash=$(git rev-parse HEAD)
-    sed -i.bak "s/commit_hash = .*/commit_hash = \"$commit_hash\"/" "$catalog_file"
-    
-    rm "${catalog_file}.bak"
-    
-    success "Updated gitspace-catalog.toml"
-}
-
 # Main execution
+cd "$(git rev-parse --show-toplevel)/plugins"
 log "Building and installing all plugins in the catalog..."
 build_plugins
-update_catalog
-success "All plugins built, installed, and catalog updated successfully."
+success "All plugins built, installed, and root .gitignore updated successfully."
