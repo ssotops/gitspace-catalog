@@ -64,6 +64,27 @@ update_gitignore() {
     fi
 }
 
+# Function to handle Scmtea plugin-specific tasks
+handle_scmtea_plugin() {
+    local plugin_dir="$1"
+    local plugin_name="$2"
+    
+    # Remove trailing slash from plugin_dir if present
+    plugin_dir="${plugin_dir%/}"
+    
+    # Copy default docker-compose.yaml to the plugin's data directory
+    local data_dir="$HOME/.ssot/gitspace/plugins/data/scmtea"
+    mkdir -p "$data_dir"
+    local compose_file="$plugin_dir/default-docker-compose.yaml"
+    if [ -f "$compose_file" ]; then
+        cp "$compose_file" "$data_dir/default-docker-compose.yaml"
+        log "Copied default-docker-compose.yaml to $data_dir"
+    else
+        error "default-docker-compose.yaml not found in $plugin_dir"
+        ls -la "$plugin_dir"  # Debug: List contents of plugin directory
+    fi
+}
+
 # Build all plugins in the catalog
 build_plugins() {
     for plugin_dir in */; do
@@ -80,6 +101,11 @@ build_plugins() {
                     success "Plugin $plugin_name built successfully."
                     install_plugin "$plugin_name" "$plugin_name"
                     update_gitignore "$plugin_name"
+                    
+                    # Handle Scmtea plugin-specific tasks
+                    if [ "$plugin_name" == "scmtea" ]; then
+                        handle_scmtea_plugin "$PWD" "$plugin_name"
+                    fi
                 else
                     error "Failed to build plugin $plugin_name."
                     exit 1
@@ -88,6 +114,7 @@ build_plugins() {
         fi
     done
 }
+
 
 # Main execution
 cd "$(git rev-parse --show-toplevel)/plugins"
