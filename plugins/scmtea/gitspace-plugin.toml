@@ -1,0 +1,8 @@
+[metadata]
+name = "Scmtea"
+version = "1.0.0"
+description = "A plugin for managing Gitea in Docker"
+
+[[sources]]
+path = "main.go"
+entry_point = "ScmteaPlugin"
