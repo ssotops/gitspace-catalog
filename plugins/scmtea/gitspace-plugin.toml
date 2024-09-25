@@ -1,7 +1,7 @@
 [metadata]
-name = "Scmtea"
+name = "scmtea"
 version = "1.0.0"
-description = "A plugin for managing Gitea in Docker"
+description = "Gitea local container management"
 
 [[sources]]
 path = "main.go"
