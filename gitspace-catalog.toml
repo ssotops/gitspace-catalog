@@ -1,23 +1,23 @@
 [catalog]
-description = "Official catalog of plugins and templates for Gitspace"
-version = "2024.09.28"
-last_updated = { date = "2024-09-25T11:14:31Z", commit_hash = "placeholder_hash" }
 name = "Gitspace Official Catalog"
+description = "Official catalog of plugins and templates for Gitspace"
+version = "2024.09.29"
+last_updated = { date = "2024-09-25T18:37:40Z", commit_hash = "placeholder_hash" }
 
 [plugins]
 [plugins.scmtea]
+version = "1.0.0"
 description = "Gitea local container management"
 path = "plugins/scmtea"
-version = "1.0.0"
 
 [templates]
-[templates.gitspace-catalog-starter]
-version = "0.1.0"
-description = "A starter template for creating a Gitspace catalog"
-path = "templates/gitspace-catalog-starter"
-
 [templates.gitspace-plugin-starter]
 version = "0.1.0"
 description = "A starter template for creating a Gitspace plugin"
 path = "templates/gitspace-plugin-starter"
+
+[templates.gitspace-catalog-starter]
+path = "templates/gitspace-catalog-starter"
+version = "0.1.0"
+description = "A starter template for creating a Gitspace catalog"
 
