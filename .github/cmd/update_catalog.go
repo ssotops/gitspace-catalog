@@ -153,12 +153,28 @@ func loadPluginInfo(pluginDir string) (map[string]interface{}, error) {
 	}
 
 	info := make(map[string]interface{})
-	if tree.Has("plugin") {
+
+	// Check for new format (metadata section)
+	if tree.Has("metadata") {
+		metadataInfo := tree.Get("metadata").(*toml.Tree)
+		info["version"] = metadataInfo.Get("version")
+		info["description"] = metadataInfo.Get("description")
+	} else if tree.Has("plugin") {
+		// Old format (plugin section)
 		pluginInfo := tree.Get("plugin").(*toml.Tree)
 		info["version"] = pluginInfo.Get("version")
 		info["description"] = pluginInfo.Get("description")
+	} else {
+		// If neither format is found, return an error
+		return nil, fmt.Errorf("invalid plugin TOML format: neither 'metadata' nor 'plugin' section found")
 	}
+
 	info["path"] = pluginDir
+
+	// Ensure we have both version and description
+	if info["version"] == nil || info["description"] == nil {
+		return nil, fmt.Errorf("plugin TOML is missing required fields (version or description)")
+	}
 
 	return info, nil
 }
@@ -215,7 +231,13 @@ func loadTemplateInfo(templateDir string) (map[string]interface{}, error) {
 	}
 
 	info := make(map[string]interface{})
-	if tree.Has("template") {
+
+	// Check for new format (metadata section)
+	if tree.Has("metadata") {
+		metadataInfo := tree.Get("metadata").(*toml.Tree)
+		info["version"] = metadataInfo.Get("version")
+		info["description"] = metadataInfo.Get("description")
+	} else if tree.Has("template") {
 		templateInfo := tree.Get("template").(*toml.Tree)
 		info["version"] = templateInfo.Get("version")
 		info["description"] = templateInfo.Get("description")
@@ -223,8 +245,16 @@ func loadTemplateInfo(templateDir string) (map[string]interface{}, error) {
 		pluginInfo := tree.Get("plugin").(*toml.Tree)
 		info["version"] = pluginInfo.Get("version")
 		info["description"] = pluginInfo.Get("description")
+	} else {
+		return nil, fmt.Errorf("invalid TOML format: no 'metadata', 'template', or 'plugin' section found")
 	}
+
 	info["path"] = templateDir
+
+	// Ensure we have both version and description
+	if info["version"] == nil || info["description"] == nil {
+		return nil, fmt.Errorf("TOML is missing required fields (version or description)")
+	}
 
 	return info, nil
 }
