@@ -184,31 +184,41 @@ func setComposeFile(option, customPath string) (*pb.CommandResponse, error) {
 }
 
 func runDockerCompose(args ...string) (*pb.CommandResponse, error) {
+	log.Info("Running docker-compose command", "args", args)
+
 	composePath, err := getComposePath()
 	if err != nil {
+		log.Error("Error getting compose path", "error", err)
 		return &pb.CommandResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+	log.Info("Compose file path", "path", composePath)
 
 	// Try docker-compose command
+	log.Info("Attempting to run docker-compose command")
 	cmd := exec.Command("docker-compose", append([]string{"-f", composePath}, args...)...)
 	output, err := cmd.CombinedOutput()
+	log.Info("docker-compose command output", "output", string(output))
 
 	if err != nil {
+		log.Error("docker-compose command failed, attempting docker compose", "error", err)
 		// If docker-compose fails, try docker compose
 		cmd = exec.Command("docker", append([]string{"compose", "-f", composePath}, args...)...)
 		output, err = cmd.CombinedOutput()
+		log.Info("docker compose command output", "output", string(output))
 	}
 
 	if err != nil {
+		log.Error("Error executing Docker Compose command", "error", err, "output", string(output))
 		return &pb.CommandResponse{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("Error executing Docker Compose command: %v\nOutput: %s", err, string(output)),
 		}, nil
 	}
 
+	log.Info("Docker Compose command executed successfully")
 	return &pb.CommandResponse{
 		Success: true,
 		Result:  string(output),
@@ -272,25 +282,60 @@ Database Container:
 }
 
 func deleteContainersAndImages() (*pb.CommandResponse, error) {
-	_, err := runDockerCompose("down")
+	log.Info("Starting deleteContainersAndImages")
+
+	// Stop and remove containers
+	log.Info("Stopping and removing containers with docker-compose down")
+	downOutput, err := runDockerCompose("down")
 	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error stopping containers: %v", err)}, nil
+		log.Error("Error stopping containers", "error", err, "output", downOutput)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error stopping containers: %v\nOutput: %s", err, downOutput)}, nil
+	}
+	log.Info("docker-compose down completed successfully")
+
+	// Remove Gitea images
+	log.Info("Attempting to remove Gitea images")
+	giteaImages, err := exec.Command("docker", "images", "gitea/gitea", "-q").Output()
+	if err != nil {
+		log.Error("Error listing Gitea images", "error", err)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error listing Gitea images: %v", err)}, nil
 	}
 
-	cmd := exec.Command("docker", "rmi", "$(docker images 'gitea/gitea' -q)")
-	cmd.Stderr = os.Stderr
-	err = cmd.Run()
-	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error removing Gitea images: %v", err)}, nil
+	log.Info("Gitea images found", "images", string(giteaImages))
+	if len(giteaImages) > 0 {
+		cmd := exec.Command("docker", "rmi", "-f", strings.TrimSpace(string(giteaImages)))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Error("Error removing Gitea images", "error", err, "output", string(output))
+			return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error removing Gitea images: %v\nOutput: %s", err, output)}, nil
+		}
+		log.Info("Gitea images removed successfully")
+	} else {
+		log.Info("No Gitea images found to remove")
 	}
 
-	cmd = exec.Command("docker", "rmi", "$(docker images 'postgres:13' -q)")
-	cmd.Stderr = os.Stderr
-	err = cmd.Run()
+	// Remove Postgres images
+	log.Info("Attempting to remove Postgres images")
+	postgresImages, err := exec.Command("docker", "images", "postgres:13", "-q").Output()
 	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error removing Postgres images: %v", err)}, nil
+		log.Error("Error listing Postgres images", "error", err)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error listing Postgres images: %v", err)}, nil
 	}
 
+	log.Info("Postgres images found", "images", string(postgresImages))
+	if len(postgresImages) > 0 {
+		cmd := exec.Command("docker", "rmi", "-f", strings.TrimSpace(string(postgresImages)))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Error("Error removing Postgres images", "error", err, "output", string(output))
+			return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error removing Postgres images: %v\nOutput: %s", err, output)}, nil
+		}
+		log.Info("Postgres images removed successfully")
+	} else {
+		log.Info("No Postgres images found to remove")
+	}
+
+	log.Info("deleteContainersAndImages completed successfully")
 	return &pb.CommandResponse{
 		Success: true,
 		Result:  "Containers and images have been deleted.",
