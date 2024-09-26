@@ -98,7 +98,6 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 			SubMenu: []gsplug.MenuOption{
 				{Label: "Use Default Docker Compose File", Command: "set_compose_file_default"},
 				{Label: "Enter Custom Docker Compose Path", Command: "set_compose_file_custom"},
-				{Label: "Go Back", Command: "go_back"},
 			},
 		},
 		{
@@ -192,11 +191,6 @@ func setComposeFile(option, customPath string) (*pb.CommandResponse, error) {
 				ErrorMessage: fmt.Sprintf("Failed to copy custom docker-compose.yaml: %v", err),
 			}, nil
 		}
-	case "Go back":
-		return &pb.CommandResponse{
-			Success: true,
-			Result:  "Operation cancelled",
-		}, nil
 	default:
 		return &pb.CommandResponse{
 			Success:      false,
