@@ -4,7 +4,7 @@ go 1.23.1
 
 require (
 	github.com/charmbracelet/log v0.4.0
-	github.com/ssotops/gitspace-plugin-sdk v0.0.0-20240924232006-2e6132d051ca
+	github.com/ssotops/gitspace-plugin-sdk v0.0.0-20240925221722-564b76febbdc
 	google.golang.org/protobuf v1.34.2
 )
 
@@ -24,3 +24,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240924160255-9d4c2d233b61 // indirect
 	google.golang.org/grpc v1.67.0 // indirect
 )
+
+replace github.com/ssotops/gitspace-plugin-sdk => ../../../gitspace-plugin-sdk
