@@ -44,7 +44,23 @@ func (p *ScmteaPlugin) GetPluginInfo(req *pb.PluginInfoRequest) (*pb.PluginInfo,
 func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 	switch req.Command {
 	case "set_compose_file":
-		return setComposeFile(req.Parameters["option"], req.Parameters["custom_path"])
+		// This is just a submenu entry point, so we don't need to do anything here
+		return &pb.CommandResponse{
+			Success: true,
+			Result:  "Select an option from the Docker Compose submenu",
+		}, nil
+	case "set_compose_file_default":
+		return setComposeFile("Use default", "")
+	case "set_compose_file_custom":
+		if customPath, ok := req.Parameters["custom_path"]; ok {
+			return setComposeFile("Enter custom path", customPath)
+		}
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: "Please provide a custom_path parameter for the Docker Compose file.",
+		}, nil
+	case "setup":
+		return setupGitea(req)
 	case "start":
 		return runDockerCompose("up", "-d")
 	case "stop":
@@ -55,14 +71,17 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 		return runDockerCompose("up", "-d", "--force-recreate")
 	case "print_summary":
 		return printGiteaSummary()
+	case "git_config_summary":
+		return gitConfigSummary()
 	case "delete_containers_images":
 		return deleteContainersAndImages()
 	case "delete_volumes":
 		return deleteVolumes()
-	case "setup":
-		return setupGitea(req)
-	case "git_config_summary":
-		return gitConfigSummary()
+	case "go_back":
+		return &pb.CommandResponse{
+			Success: true,
+			Result:  "Returned to previous menu",
+		}, nil
 	default:
 		return &pb.CommandResponse{
 			Success:      false,
@@ -76,9 +95,10 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 		{
 			Label:   "Set Docker Compose File",
 			Command: "set_compose_file",
-			Parameters: []gsplug.ParameterInfo{
-				{Name: "option", Description: "Choose Docker Compose file option (Use default, Enter custom path, Go back)", Required: true},
-				{Name: "custom_path", Description: "Path to custom docker-compose.yaml file", Required: false},
+			SubMenu: []gsplug.MenuOption{
+				{Label: "Use Default Docker Compose File", Command: "set_compose_file_default"},
+				{Label: "Enter Custom Docker Compose Path", Command: "set_compose_file_custom"},
+				{Label: "Go Back", Command: "go_back"},
 			},
 		},
 		{
@@ -117,7 +137,10 @@ func setComposeFile(option, customPath string) (*pb.CommandResponse, error) {
 	dataDir := filepath.Join(os.Getenv("HOME"), pluginDataDir)
 	destPath := filepath.Join(dataDir, composeFileName)
 
+	log.Info("Setting compose file", "dataDir", dataDir, "destPath", destPath)
+
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Error("Failed to create plugin data directory", "error", err)
 		return &pb.CommandResponse{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("Failed to create plugin data directory: %v", err),
@@ -126,19 +149,23 @@ func setComposeFile(option, customPath string) (*pb.CommandResponse, error) {
 
 	switch option {
 	case "Use default":
+		log.Info("Using default compose file")
 		defaultCompose, err := defaultComposeFile.ReadFile(defaultComposeFileName)
 		if err != nil {
+			log.Error("Failed to read default docker-compose.yaml", "error", err)
 			return &pb.CommandResponse{
 				Success:      false,
 				ErrorMessage: fmt.Sprintf("Failed to read default docker-compose.yaml: %v", err),
 			}, nil
 		}
 		if err = ioutil.WriteFile(destPath, defaultCompose, 0644); err != nil {
+			log.Error("Failed to write default docker-compose.yaml", "error", err)
 			return &pb.CommandResponse{
 				Success:      false,
 				ErrorMessage: fmt.Sprintf("Failed to write default docker-compose.yaml: %v", err),
 			}, nil
 		}
+		log.Info("Default compose file written successfully", "path", destPath)
 	case "Enter custom path":
 		if customPath == "" {
 			return &pb.CommandResponse{
