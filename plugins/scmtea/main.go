@@ -52,13 +52,14 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 	case "set_compose_file_default":
 		return setComposeFile("Use default", "")
 	case "set_compose_file_custom":
-		if customPath, ok := req.Parameters["custom_path"]; ok {
-			return setComposeFile("Enter custom path", customPath)
+		customPath, ok := req.Parameters["custom_path"]
+		if !ok || customPath == "" {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Custom path is required for set_compose_file_custom command",
+			}, nil
 		}
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: "Please provide a custom_path parameter for the Docker Compose file.",
-		}, nil
+		return setComposeFile("Enter custom path", customPath)
 	case "setup":
 		return setupGitea(req)
 	case "start":
@@ -67,8 +68,6 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 		return runDockerCompose("down")
 	case "restart":
 		return runDockerCompose("restart")
-	case "force_recreate":
-		return runDockerCompose("up", "-d", "--force-recreate")
 	case "print_summary":
 		return printGiteaSummary()
 	case "git_config_summary":
@@ -97,7 +96,13 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 			Command: "set_compose_file",
 			SubMenu: []gsplug.MenuOption{
 				{Label: "Use Default Docker Compose File", Command: "set_compose_file_default"},
-				{Label: "Enter Custom Docker Compose Path", Command: "set_compose_file_custom"},
+				{
+					Label:   "Enter Custom Docker Compose Path",
+					Command: "set_compose_file_custom",
+					Parameters: []gsplug.ParameterInfo{
+						{Name: "custom_path", Description: "Path to custom Docker Compose file", Required: true},
+					},
+				},
 			},
 		},
 		{
@@ -105,7 +110,7 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 			Command: "setup",
 			Parameters: []gsplug.ParameterInfo{
 				{Name: "username", Description: "Gitea username", Required: true},
-				{Name: "password", Description: "Gitea password (will not be displayed)", Required: true},
+				{Name: "password", Description: "Gitea password (warning: will be unmasked/displayed in terminal for now)", Required: true},
 				{Name: "email", Description: "Gitea email", Required: true},
 				{Name: "git_name", Description: "Name for Git commits", Required: true},
 				{Name: "repo_name", Description: "Repository name", Required: true},
@@ -115,7 +120,6 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 		{Label: "Start Gitea", Command: "start"},
 		{Label: "Stop Gitea", Command: "stop"},
 		{Label: "Restart Gitea", Command: "restart"},
-		{Label: "Force Recreate Gitea", Command: "force_recreate"},
 		{Label: "Print Gitea Summary", Command: "print_summary"},
 		{Label: "Print Git Config Summary", Command: "git_config_summary"},
 		{Label: "Delete Gitea Containers and Images", Command: "delete_containers_images"},
@@ -460,12 +464,11 @@ func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 		log.Error("Failed to start Gitea containers", "error", err)
 		return startResponse, err
 	}
-	log.Info("Gitea containers started successfully")
+	log.Info("Gitea containers started successfully", "output", startResponse.Result)
 
 	// Wait for Gitea to be ready
 	log.Info("Waiting for Gitea to be ready...")
 	if err := waitForGitea(); err != nil {
-
 		log.Error("Gitea failed to start within the expected time", "error", err)
 		return &pb.CommandResponse{
 			Success:      false,
@@ -605,17 +608,18 @@ func uploadSSHKey(username, password, sshKey, keyTitle string) error {
 	payload := fmt.Sprintf(`{"title":"%s","key":"%s"}`, keyTitle, sshKey)
 	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create request: %v", err)
 	}
 	req.SetBasicAuth(username, password)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to send request: %v", err)
 	}
 	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("failed to upload SSH key, status: %s", resp.Status)
+		return fmt.Errorf("failed to upload SSH key, status: %s, body: %s", resp.Status, string(body))
 	}
 	return nil
 }
@@ -652,12 +656,17 @@ func generateUniqueID() (string, error) {
 func waitForGitea() error {
 	client := &http.Client{Timeout: 1 * time.Second}
 	for i := 0; i < 60; i++ { // Try for 60 seconds
+		log.Info("Checking if Gitea is up", "attempt", i+1)
 		resp, err := client.Get("http://localhost:3000/")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
+				log.Info("Gitea is up and running")
 				return nil // Gitea is up
 			}
+			log.Info("Gitea is not ready yet", "status", resp.StatusCode)
+		} else {
+			log.Info("Error connecting to Gitea", "error", err)
 		}
 		time.Sleep(1 * time.Second)
 	}
