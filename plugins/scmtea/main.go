@@ -674,8 +674,8 @@ func waitForGitea() error {
 }
 
 func main() {
-	logDir := filepath.Join("logs", "scmtea")
-	logger, err := logger.NewRateLimitedLogger(logDir, "scmtea")
+	pluginName := "scmtea"
+	logger, err := logger.NewRateLimitedLogger(pluginName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
 		os.Exit(1)
