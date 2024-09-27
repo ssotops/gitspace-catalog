@@ -69,7 +69,17 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 	case "restart":
 		return runDockerCompose("restart")
 	case "print_summary":
-		return printGiteaSummary()
+		summary, err := printGiteaSummary()
+		if err != nil {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to print Gitea summary: %v", err),
+			}, nil
+		}
+		return &pb.CommandResponse{
+			Success: true,
+			Result:  summary,
+		}, nil
 	case "git_config_summary":
 		return gitConfigSummary()
 	case "delete_containers_images":
@@ -270,19 +280,19 @@ func getComposePath() (string, error) {
 	return composePath, nil
 }
 
-func printGiteaSummary() (*pb.CommandResponse, error) {
+func printGiteaSummary() (string, error) {
 	giteaContainer, err := exec.Command("docker", "ps", "--filter", "name=gitea", "--format", "{{.Names}}").Output()
 	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error getting Gitea container: %v", err)}, nil
+		return "", fmt.Errorf("Error getting Gitea container: %v", err)
 	}
 
 	dbContainer, err := exec.Command("docker", "ps", "--filter", "name=gitea_db", "--format", "{{.Names}}").Output()
 	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error getting DB container: %v", err)}, nil
+		return "", fmt.Errorf("Error getting DB container: %v", err)
 	}
 
 	if len(giteaContainer) == 0 || len(dbContainer) == 0 {
-		return &pb.CommandResponse{Success: false, ErrorMessage: "Gitea containers are not running. Please start Gitea first."}, nil
+		return "", fmt.Errorf("Gitea containers are not running. Please start Gitea first.")
 	}
 
 	giteaPort, _ := exec.Command("docker", "port", strings.TrimSpace(string(giteaContainer)), "3000").Output()
@@ -311,10 +321,7 @@ Database Container:
 		strings.TrimSpace(strings.Split(string(dbPort), ":")[1]),
 		strings.TrimSpace(string(dbIp)))
 
-	return &pb.CommandResponse{
-		Success: true,
-		Result:  summary,
-	}, nil
+	return summary, nil
 }
 
 func deleteContainersAndImages() (*pb.CommandResponse, error) {
@@ -674,8 +681,7 @@ func waitForGitea() error {
 }
 
 func main() {
-	pluginName := "scmtea"
-	logger, err := logger.NewRateLimitedLogger(pluginName)
+	logger, err := logger.NewRateLimitedLogger("scmtea")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
 		os.Exit(1)
@@ -723,6 +729,7 @@ func main() {
 			logger.Debug("Response sent successfully")
 		}
 
+		// Flush stdout to ensure the message is sent immediately
 		os.Stdout.Sync()
 	}
 }
