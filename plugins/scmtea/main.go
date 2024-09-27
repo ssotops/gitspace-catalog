@@ -31,7 +31,9 @@ const (
 	defaultComposeFileName = "default-docker-compose.yaml"
 )
 
-type ScmteaPlugin struct{}
+type ScmteaPlugin struct {
+	logger *logger.RateLimitedLogger
+}
 
 func (p *ScmteaPlugin) GetPluginInfo(req *pb.PluginInfoRequest) (*pb.PluginInfo, error) {
 	log.Info("GetPluginInfo called")
@@ -69,7 +71,17 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 	case "restart":
 		return runDockerCompose("restart")
 	case "print_summary":
-		return printGiteaSummary()
+		summary, err := printGiteaSummary(p.logger)
+		if err != nil {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to print Gitea summary: %v", err),
+			}, nil
+		}
+		return &pb.CommandResponse{
+			Success: true,
+			Result:  summary,
+		}, nil
 	case "git_config_summary":
 		return gitConfigSummary()
 	case "delete_containers_images":
@@ -270,27 +282,89 @@ func getComposePath() (string, error) {
 	return composePath, nil
 }
 
-func printGiteaSummary() (*pb.CommandResponse, error) {
-	giteaContainer, err := exec.Command("docker", "ps", "--filter", "name=gitea", "--format", "{{.Names}}").Output()
+func printGiteaSummary(logger *logger.RateLimitedLogger) (string, error) {
+	logger.Debug("Starting printGiteaSummary function")
+
+	// Helper function to run Docker commands and log output
+	runDockerCommand := func(name string, args ...string) (string, error) {
+		cmd := exec.Command("docker", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			logger.Error("Docker command failed",
+				"command", name,
+				"args", args,
+				"error", err,
+				"output", string(output))
+			return "", fmt.Errorf("%s failed: %v - Output: %s", name, err, output)
+		}
+		logger.Debug("Docker command succeeded",
+			"command", name,
+			"output", string(output))
+		return strings.TrimSpace(string(output)), nil
+	}
+
+	// Check Docker daemon
+	_, err := runDockerCommand("Check Docker", "version")
 	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error getting Gitea container: %v", err)}, nil
+		return "", fmt.Errorf("Docker daemon is not accessible: %v", err)
 	}
 
-	dbContainer, err := exec.Command("docker", "ps", "--filter", "name=gitea_db", "--format", "{{.Names}}").Output()
+	// List all running containers
+	allContainers, err := runDockerCommand("List containers", "ps", "--format", "{{.Names}}")
 	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error getting DB container: %v", err)}, nil
+		return "", fmt.Errorf("Failed to list containers: %v", err)
+	}
+	logger.Debug("All running containers", "containers", allContainers)
+
+	// Find Gitea and DB containers
+	giteaContainer := ""
+	dbContainer := ""
+	for _, container := range strings.Split(allContainers, "\n") {
+		if strings.Contains(container, "gitea") && !strings.Contains(container, "db") {
+			giteaContainer = container
+		} else if strings.Contains(container, "gitea") && strings.Contains(container, "db") {
+			dbContainer = container
+		}
 	}
 
-	if len(giteaContainer) == 0 || len(dbContainer) == 0 {
-		return &pb.CommandResponse{Success: false, ErrorMessage: "Gitea containers are not running. Please start Gitea first."}, nil
+	if giteaContainer == "" || dbContainer == "" {
+		logger.Warn("Gitea containers are not running")
+		return "", fmt.Errorf("Gitea containers are not running. Please start Gitea first.")
 	}
 
-	giteaPort, _ := exec.Command("docker", "port", strings.TrimSpace(string(giteaContainer)), "3000").Output()
-	giteaSshPort, _ := exec.Command("docker", "port", strings.TrimSpace(string(giteaContainer)), "22").Output()
-	giteaIp, _ := exec.Command("docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", strings.TrimSpace(string(giteaContainer))).Output()
+	logger.Debug("Found Gitea containers", "gitea", giteaContainer, "db", dbContainer)
 
-	dbPort, _ := exec.Command("docker", "port", strings.TrimSpace(string(dbContainer)), "5432").Output()
-	dbIp, _ := exec.Command("docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", strings.TrimSpace(string(dbContainer))).Output()
+	giteaPort, err := runDockerCommand("Get Gitea port", "port", giteaContainer, "3000")
+	if err != nil {
+		logger.Warn("Failed to get Gitea port, using default", "error", err)
+		giteaPort = "3000"
+	}
+
+	giteaSshPort, err := runDockerCommand("Get Gitea SSH port", "port", giteaContainer, "22")
+	if err != nil {
+		logger.Warn("Failed to get Gitea SSH port, using default", "error", err)
+		giteaSshPort = "22"
+	}
+
+	giteaIp, err := runDockerCommand("Get Gitea IP", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", giteaContainer)
+	if err != nil {
+		logger.Warn("Failed to get Gitea IP", "error", err)
+		giteaIp = "N/A"
+	}
+
+	dbPort := "5432" // Default Postgres port
+	dbPortMapping, err := runDockerCommand("Get DB port mapping", "port", dbContainer)
+	if err != nil {
+		logger.Warn("Failed to get DB port mapping, using internal port", "error", err)
+	} else if dbPortMapping != "" {
+		dbPort = strings.Split(dbPortMapping, ":")[0]
+	}
+
+	dbIp, err := runDockerCommand("Get DB IP", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dbContainer)
+	if err != nil {
+		logger.Warn("Failed to get DB IP", "error", err)
+		dbIp = "N/A"
+	}
 
 	summary := fmt.Sprintf(`Gitea Summary:
 Gitea Container:
@@ -301,20 +375,18 @@ Gitea Container:
 
 Database Container:
   Name: %s
-  Port: %s
+  Port: %s (internal)
   Internal IP: %s`,
-		strings.TrimSpace(string(giteaContainer)),
-		strings.TrimSpace(strings.Split(string(giteaPort), ":")[1]),
-		strings.TrimSpace(strings.Split(string(giteaSshPort), ":")[1]),
-		strings.TrimSpace(string(giteaIp)),
-		strings.TrimSpace(string(dbContainer)),
-		strings.TrimSpace(strings.Split(string(dbPort), ":")[1]),
-		strings.TrimSpace(string(dbIp)))
+		giteaContainer,
+		strings.TrimPrefix(giteaPort, "0.0.0.0:"),
+		strings.TrimPrefix(giteaSshPort, "0.0.0.0:"),
+		giteaIp,
+		dbContainer,
+		dbPort,
+		dbIp)
 
-	return &pb.CommandResponse{
-		Success: true,
-		Result:  summary,
-	}, nil
+	logger.Debug("Generated summary", "summary", summary)
+	return summary, nil
 }
 
 func deleteContainersAndImages() (*pb.CommandResponse, error) {
@@ -674,8 +746,7 @@ func waitForGitea() error {
 }
 
 func main() {
-	pluginName := "scmtea"
-	logger, err := logger.NewRateLimitedLogger(pluginName)
+	logger, err := logger.NewRateLimitedLogger("scmtea")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
 		os.Exit(1)
@@ -683,7 +754,9 @@ func main() {
 
 	logger.Info("Scmtea plugin starting")
 
-	plugin := &ScmteaPlugin{}
+	plugin := &ScmteaPlugin{
+		logger: logger,
+	}
 
 	for {
 		logger.Debug("Waiting for message")
@@ -723,6 +796,7 @@ func main() {
 			logger.Debug("Response sent successfully")
 		}
 
+		// Flush stdout to ensure the message is sent immediately
 		os.Stdout.Sync()
 	}
 }
