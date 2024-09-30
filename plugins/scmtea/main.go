@@ -585,9 +585,20 @@ func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 		}, nil
 	}
 
+	// Wait for Gitea to be ready
+	log.Info("Waiting for Gitea to be ready...")
+	if err := waitForGitea(); err != nil {
+		log.Error("Gitea failed to start within the expected time", "error", err)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error waiting for Gitea to start: %v", err),
+		}, nil
+	}
+	log.Info("Gitea is now ready")
+
 	// Run the Puppeteer script
 	log.Info("Running Gitea setup script...")
-	cmd := exec.Command("node", setupScriptPath,
+	cmd := exec.Command("bun", "run", setupScriptPath,
 		req.Parameters["username"],
 		req.Parameters["password"],
 		req.Parameters["email"],
@@ -718,18 +729,13 @@ func generateAndUploadSSHKey(params map[string]string) (string, error) {
 
 func waitForGitea() error {
 	client := &http.Client{Timeout: 1 * time.Second}
-	for i := 0; i < 60; i++ { // Try for 60 seconds
-		log.Info("Checking if Gitea is up", "attempt", i+1)
+	for i := 0; i < 120; i++ { // Try for 2 minutes
 		resp, err := client.Get("http://localhost:3000/")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				log.Info("Gitea is up and running")
 				return nil // Gitea is up
 			}
-			log.Info("Gitea is not ready yet", "status", resp.StatusCode)
-		} else {
-			log.Info("Error connecting to Gitea", "error", err)
 		}
 		time.Sleep(1 * time.Second)
 	}

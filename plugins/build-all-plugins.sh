@@ -56,9 +56,38 @@ install_plugin() {
         cp "$plugin_path"/*.toml "$install_dir/" 2>/dev/null || true
         cp "$plugin_path"/*.yaml "$install_dir/" 2>/dev/null || true
         cp "$plugin_path"/*.js "$install_dir/" 2>/dev/null || true
+
+        # Set up Node.js environment
+        setup_nodejs_env "$data_dir"
     fi
     
     log "Installed $plugin_name to $install_dir"
+}
+
+setup_nodejs_env() {
+    local dir="$1"
+    
+    # Check if bun is installed
+    if ! command -v bun &> /dev/null; then
+        log "Installing bun..."
+        curl -fsSL https://bun.sh/install | bash
+    fi
+
+    # Navigate to the directory
+    cd "$dir"
+
+    # Initialize a new package if package.json doesn't exist
+    if [ ! -f "package.json" ]; then
+        log "Initializing new package..."
+        bun init -y
+    fi
+
+    # Install dependencies
+    log "Installing dependencies..."
+    bun add puppeteer
+
+    # Return to the original directory
+    cd -
 }
 
 # Function to update root .gitignore
