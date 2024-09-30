@@ -37,12 +37,26 @@ install_plugin() {
     local plugin_name="$1"
     local plugin_path="$2"
     local install_dir="$HOME/.ssot/gitspace/plugins/$plugin_name"
+    local data_dir="$HOME/.ssot/gitspace/plugins/data/$plugin_name"
     
-    # Ensure the installation directory exists
+    # Ensure the installation and data directories exist
     mkdir -p "$install_dir"
+    mkdir -p "$data_dir"
     
-    # Copy the plugin to the installation directory
-    cp "$plugin_path" "$install_dir/"
+    # Copy the plugin binary to the installation directory
+    cp "$plugin_path/$plugin_name" "$install_dir/"
+    
+    # Copy additional files for scmtea plugin
+    if [ "$plugin_name" == "scmtea" ]; then
+        # Copy individual files
+        cp "$plugin_path/setup_gitea.js" "$data_dir/" 2>/dev/null || true
+        cp "$plugin_path/default-docker-compose.yaml" "$data_dir/" 2>/dev/null || true
+        
+        # Copy any other necessary files
+        cp "$plugin_path"/*.toml "$install_dir/" 2>/dev/null || true
+        cp "$plugin_path"/*.yaml "$install_dir/" 2>/dev/null || true
+        cp "$plugin_path"/*.js "$install_dir/" 2>/dev/null || true
+    fi
     
     log "Installed $plugin_name to $install_dir"
 }
@@ -72,17 +86,14 @@ handle_scmtea_plugin() {
     # Remove trailing slash from plugin_dir if present
     plugin_dir="${plugin_dir%/}"
     
-    # Copy default docker-compose.yaml to the plugin's data directory
+    # Copy files to the plugin's data directory
     local data_dir="$HOME/.ssot/gitspace/plugins/data/scmtea"
     mkdir -p "$data_dir"
-    local compose_file="$plugin_dir/default-docker-compose.yaml"
-    if [ -f "$compose_file" ]; then
-        cp "$compose_file" "$data_dir/default-docker-compose.yaml"
-        log "Copied default-docker-compose.yaml to $data_dir"
-    else
-        error "default-docker-compose.yaml not found in $plugin_dir"
-        ls -la "$plugin_dir"  # Debug: List contents of plugin directory
-    fi
+    
+    cp "$plugin_dir/default-docker-compose.yaml" "$data_dir/" 2>/dev/null || true
+    cp "$plugin_dir/setup_gitea.js" "$data_dir/" 2>/dev/null || true
+    
+    log "Copied scmtea plugin files to $data_dir"
 }
 
 # Build all plugins in the catalog
@@ -99,7 +110,7 @@ build_plugins() {
                 go build -o "$plugin_name"
                 if [ $? -eq 0 ]; then
                     success "Plugin $plugin_name built successfully."
-                    install_plugin "$plugin_name" "$plugin_name"
+                    install_plugin "$plugin_name" "$PWD"
                     update_gitignore "$plugin_name"
                     
                     # Handle Scmtea plugin-specific tasks
@@ -114,7 +125,6 @@ build_plugins() {
         fi
     done
 }
-
 
 # Main execution
 cd "$(git rev-parse --show-toplevel)/plugins"
