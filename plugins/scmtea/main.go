@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
+	"github.com/pelletier/go-toml"
 	"github.com/ssotops/gitspace-plugin-sdk/gsplug"
 	"github.com/ssotops/gitspace-plugin-sdk/logger"
 	pb "github.com/ssotops/gitspace-plugin-sdk/proto"
@@ -30,6 +32,18 @@ const (
 	composeFileName        = "docker-compose.yaml"
 	defaultComposeFileName = "default-docker-compose.yaml"
 )
+
+type DefaultValues struct {
+	Gitea struct {
+		LastUpdated time.Time `toml:"last_updated"`
+		Username    string    `toml:"username"`
+		Password    string    `toml:"password"`
+		Email       string    `toml:"email"`
+		GitName     string    `toml:"git_name"`
+		RepoName    string    `toml:"repo_name"`
+		SSHPort     string    `toml:"ssh_port"`
+	} `toml:"gitea"`
+}
 
 type ScmteaPlugin struct {
 	logger *logger.RateLimitedLogger
@@ -549,120 +563,200 @@ func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 	}
 	log.Info("Gitea is now ready")
 
-	username := req.Parameters["username"]
-	password := req.Parameters["password"]
-	email := req.Parameters["email"]
-	gitName := req.Parameters["git_name"]
-	repoName := req.Parameters["repo_name"]
-	sshPort := req.Parameters["ssh_port"]
-	if sshPort == "" {
-		sshPort = "22"
-	}
-
-	// Ensure .ssh directory exists
-	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error creating .ssh directory: %v", err),
-		}, nil
-	}
-
-	// Check if ssh-keygen is installed
-	if _, err := exec.LookPath("ssh-keygen"); err != nil {
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: "ssh-keygen command not found. Please ensure it's installed and in your PATH.",
-		}, nil
-	}
-
-	// Generate a unique identifier
-	uniqueID, err := generateUniqueID()
+	// Get the user's home directory
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
+		log.Error("Failed to get user home directory", "error", err)
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error generating unique ID: %v", err),
+			ErrorMessage: fmt.Sprintf("Failed to get user home directory: %v", err),
 		}, nil
 	}
 
-	// Create a unique filename for the SSH key
-	sshKeyName := fmt.Sprintf("id_ed25519_gitea_%s_%s", username, uniqueID)
-	sshKeyPath := filepath.Join(sshDir, sshKeyName)
+	// Construct the path to setup_gitea.js
+	setupScriptPath := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea", "setup_gitea.js")
 
-	// Generate SSH key
-	log.Info("Generating SSH key...")
-	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-C", email, "-f", sshKeyPath, "-N", "")
+	// Check if the file exists
+	if _, err := os.Stat(setupScriptPath); os.IsNotExist(err) {
+		log.Error("setup_gitea.js not found", "path", setupScriptPath)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("setup_gitea.js not found at %s", setupScriptPath),
+		}, nil
+	}
+
+	// Run the setup_gitea.js script
+	log.Info("Running Gitea setup script...")
+	cmd := exec.Command("node", setupScriptPath,
+		req.Parameters["username"],
+		req.Parameters["email"],
+		req.Parameters["password"])
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Error("Failed to generate SSH key", "error", err, "output", string(output))
+		log.Error("Gitea setup script failed", "error", err, "output", string(output))
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error generating SSH key: %v\nOutput: %s", err, string(output)),
+			ErrorMessage: fmt.Sprintf("Gitea setup script failed: %v\nOutput: %s", err, output),
 		}, nil
 	}
-	log.Info("SSH key generated successfully")
 
-	// Update SSH config with the new key name
-	log.Info("Updating SSH config...")
-	configPath := filepath.Join(sshDir, "config")
-	configContent := fmt.Sprintf(`
-Host gitea-local-%s
-    HostName localhost
-    Port %s
-    User git
-    IdentityFile %s
-`, uniqueID, sshPort, sshKeyPath)
-	if err := appendToFile(configPath, configContent); err != nil {
-		log.Error("Failed to update SSH config", "error", err)
+	log.Info("Gitea setup script completed", "output", string(output))
+
+	// Parse the JSON output
+	var result struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+
+	// Find the start of the JSON output
+	jsonStart := bytes.LastIndex(output, []byte("{"))
+	if jsonStart == -1 {
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error updating SSH config: %v", err),
+			ErrorMessage: "Failed to find JSON output in script response",
 		}, nil
 	}
-	log.Info("SSH config updated successfully")
+	jsonOutput := output[jsonStart:]
 
-	// Upload SSH key to Gitea
-	log.Info("Uploading SSH key to Gitea...")
-	sshKey, err := os.ReadFile(sshKeyPath + ".pub")
-	if err != nil {
-		log.Error("Failed to read SSH public key", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error reading SSH key: %v", err)}, nil
+	if err := json.Unmarshal(jsonOutput, &result); err != nil {
+		log.Error("Failed to parse setup script output", "error", err, "output", string(output))
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to parse setup script output: %v\nRaw output: %s", err, output),
+		}, nil
 	}
-	keyTitle := "Automated SSH Key"
-	if err := uploadSSHKey(username, password, string(sshKey), keyTitle); err != nil {
-		log.Error("Failed to upload SSH key to Gitea", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error uploading SSH key: %v", err)}, nil
-	}
-	log.Info("SSH key uploaded successfully")
 
-	// Clone the repository
-	log.Info("Cloning repository...")
-	if err := cloneRepo(repoName, username); err != nil {
-		log.Error("Failed to clone repository", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error cloning repository: %v", err)}, nil
+	if !result.Success {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: result.Message,
+		}, nil
 	}
-	log.Info("Repository cloned successfully")
-
-	// Set local Git configuration
-	log.Info("Setting local Git configuration...")
-	if err := setGitConfig(repoName, gitName, email); err != nil {
-		log.Error("Failed to set Git config", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error setting Git config: %v", err)}, nil
-	}
-	log.Info("Local Git configuration set successfully")
-
-	// Update remote URL
-	log.Info("Updating remote URL...")
-	if err := updateRemoteURL(repoName, username, uniqueID); err != nil {
-		log.Error("Failed to update remote URL", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error updating remote URL: %v", err)}, nil
-	}
-	log.Info("Remote URL updated successfully")
 
 	return &pb.CommandResponse{
 		Success: true,
-		Result:  "Gitea setup completed successfully!",
+		Result:  result.Message,
 	}, nil
+}
+
+func generateAndUploadSSHKey(params map[string]string) (string, error) {
+	// Generate SSH key
+	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return "", fmt.Errorf("error creating .ssh directory: %v", err)
+	}
+
+	uniqueID, err := generateUniqueID()
+	if err != nil {
+		return "", fmt.Errorf("error generating unique ID: %v", err)
+	}
+
+	sshKeyName := fmt.Sprintf("id_ed25519_gitea_%s_%s", params["username"], uniqueID)
+	sshKeyPath := filepath.Join(sshDir, sshKeyName)
+
+	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-C", params["email"], "-f", sshKeyPath, "-N", "")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("error generating SSH key: %v\nOutput: %s", err, output)
+	}
+
+	// Read public key
+	pubKeyBytes, err := ioutil.ReadFile(sshKeyPath + ".pub")
+	if err != nil {
+		return "", fmt.Errorf("error reading public key: %v", err)
+	}
+
+	// Upload SSH key
+	client := &http.Client{}
+	uploadURL := "http://localhost:3000/api/v1/user/keys"
+	data := map[string]string{
+		"title": "Gitea SSH Key",
+		"key":   string(pubKeyBytes),
+	}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("error marshaling JSON: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", uploadURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(params["username"], params["password"])
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error uploading SSH key: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return "", fmt.Errorf("SSH key upload failed with status %s: %s", resp.Status, body)
+	}
+
+	return sshKeyPath, nil
+}
+
+func waitForGitea() error {
+	client := &http.Client{Timeout: 1 * time.Second}
+	for i := 0; i < 120; i++ { // Try for 2 minutes
+		resp, err := client.Get("http://localhost:3000/")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil // Gitea is up
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return fmt.Errorf("Gitea did not start within the expected time")
+}
+
+func automateGiteaSetup(username, password, email, gitName, repoName string) error {
+	// Get the path to the plugin directory
+	pluginDir, err := getPluginDir()
+	if err != nil {
+		return fmt.Errorf("failed to get plugin directory: %w", err)
+	}
+
+	scriptPath := filepath.Join(pluginDir, "setup_gitea.js")
+
+	cmd := exec.Command("node", scriptPath,
+		username,
+		password,
+		email,
+		gitName,
+		repoName)
+
+	log.Info("Running Gitea setup script", "path", scriptPath)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to run Gitea setup script: %w\nOutput: %s", err, string(output))
+	}
+	log.Info("Gitea setup script output", "output", string(output))
+	return nil
+}
+
+func getPluginDir() (string, error) {
+	// This assumes the plugin binary is in the plugin directory
+	ex, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	return filepath.Dir(ex), nil
+}
+
+func generateUniqueID() (string, error) {
+	randomBytes := make([]byte, 4)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	timestamp := time.Now().Unix()
+	combined := append([]byte(fmt.Sprintf("%d", timestamp)), randomBytes...)
+	return hex.EncodeToString(combined), nil
 }
 
 func appendToFile(filename, content string) error {
@@ -696,9 +790,34 @@ func uploadSSHKey(username, password, sshKey, keyTitle string) error {
 	return nil
 }
 
-func cloneRepo(repoName, username string) error {
-	cmd := exec.Command("git", "clone", fmt.Sprintf("http://localhost:3000/%s/%s.git", username, repoName))
-	return cmd.Run()
+func createAndCloneRepo(repoName, username, password string) error {
+	// Create repository
+	createURL := fmt.Sprintf("http://localhost:3000/api/v1/user/repos")
+	payload := fmt.Sprintf(`{"name":"%s","auto_init":true}`, repoName)
+	req, err := http.NewRequest("POST", createURL, strings.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+	req.SetBasicAuth(username, password)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create repository, status: %s, body: %s", resp.Status, string(body))
+	}
+
+	// Clone repository
+	cloneURL := fmt.Sprintf("http://localhost:3000/%s/%s.git", username, repoName)
+	cmd := exec.Command("git", "clone", cloneURL)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to clone repository: %v\nOutput: %s", err, string(output))
+	}
+	return nil
 }
 
 func setGitConfig(repoName, gitName, email string) error {
@@ -713,36 +832,6 @@ func setGitConfig(repoName, gitName, email string) error {
 func updateRemoteURL(repoName, username, uniqueID string) error {
 	cmd := exec.Command("git", "-C", repoName, "remote", "set-url", "origin", fmt.Sprintf("git@gitea-local-%s:%s/%s.git", uniqueID, username, repoName))
 	return cmd.Run()
-}
-
-func generateUniqueID() (string, error) {
-	randomBytes := make([]byte, 4)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", err
-	}
-	timestamp := time.Now().Unix()
-	combined := append([]byte(fmt.Sprintf("%d", timestamp)), randomBytes...)
-	return hex.EncodeToString(combined), nil
-}
-
-func waitForGitea() error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	for i := 0; i < 60; i++ { // Try for 60 seconds
-		log.Info("Checking if Gitea is up", "attempt", i+1)
-		resp, err := client.Get("http://localhost:3000/")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				log.Info("Gitea is up and running")
-				return nil // Gitea is up
-			}
-			log.Info("Gitea is not ready yet", "status", resp.StatusCode)
-		} else {
-			log.Info("Error connecting to Gitea", "error", err)
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return fmt.Errorf("Gitea did not start within the expected time")
 }
 
 func main() {
@@ -799,4 +888,102 @@ func main() {
 		// Flush stdout to ensure the message is sent immediately
 		os.Stdout.Sync()
 	}
+}
+
+func createSampleRepo(username, repoName string) error {
+	// Create a new repository on Gitea
+	createURL := fmt.Sprintf("http://localhost:3000/api/v1/user/repos")
+	payload := fmt.Sprintf(`{"name":"%s","auto_init":true}`, repoName)
+	req, err := http.NewRequest("POST", createURL, strings.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.SetBasicAuth(username, "")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create repository, status: %s, body: %s", resp.Status, string(body))
+	}
+
+	// Clone the newly created repository
+	cloneURL := fmt.Sprintf("http://localhost:3000/%s/%s.git", username, repoName)
+	cmd := exec.Command("git", "clone", cloneURL)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to clone repository: %w\nOutput: %s", err, string(output))
+	}
+
+	log.Info("Sample repository created and cloned successfully")
+	return nil
+}
+
+func cloneRepo(repoName, username string) error {
+	cmd := exec.Command("git", "clone", fmt.Sprintf("http://localhost:3000/%s/%s.git", username, repoName))
+	return cmd.Run()
+}
+
+func readDefaultValues() (DefaultValues, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return DefaultValues{}, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	defaultsPath := filepath.Join(homeDir, ".ssot", "gitspace", "data", "scmtea", "defaults.toml")
+
+	var defaults DefaultValues
+	tree, err := toml.LoadFile(defaultsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If the file doesn't exist, return empty defaults
+			return DefaultValues{}, nil
+		}
+		return DefaultValues{}, fmt.Errorf("failed to read defaults file: %w", err)
+	}
+
+	err = tree.Unmarshal(&defaults)
+	if err != nil {
+		return DefaultValues{}, fmt.Errorf("failed to unmarshal defaults: %w", err)
+	}
+
+	return defaults, nil
+}
+
+func updateDefaultValues(values DefaultValues) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	defaultsPath := filepath.Join(homeDir, ".ssot", "gitspace", "data", "scmtea", "defaults.toml")
+
+	values.Gitea.LastUpdated = time.Now()
+
+	f, err := os.Create(defaultsPath)
+	if err != nil {
+		return fmt.Errorf("failed to create defaults file: %w", err)
+	}
+	defer f.Close()
+
+	encoder := toml.NewEncoder(f)
+	if err := encoder.Encode(values); err != nil {
+		return fmt.Errorf("failed to encode defaults: %w", err)
+	}
+
+	return nil
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
