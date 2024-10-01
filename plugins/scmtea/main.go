@@ -585,86 +585,58 @@ func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 		}, nil
 	}
 
-	// Wait for Gitea to be ready
-	log.Info("Waiting for Gitea to be ready...")
-	if err := waitForGitea(); err != nil {
-		log.Error("Gitea failed to start within the expected time", "error", err)
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error waiting for Gitea to start: %v", err),
-		}, nil
-	}
-	log.Info("Gitea is now ready")
-
-	// Run the Puppeteer script
+	// Run the setup_gitea.js script
 	log.Info("Running Gitea setup script...")
-	cmd := exec.Command("bun", "run", setupScriptPath,
+	cmd := exec.Command("node", setupScriptPath,
 		req.Parameters["username"],
-		req.Parameters["password"],
 		req.Parameters["email"],
-		req.Parameters["git_name"],
-		req.Parameters["repo_name"])
+		req.Parameters["password"])
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Error("Failed to run Gitea setup script", "error", err, "output", string(output))
+		log.Error("Gitea setup script failed", "error", err, "output", string(output))
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error running Gitea setup script: %v\nOutput: %s", err, output),
+			ErrorMessage: fmt.Sprintf("Gitea setup script failed: %v\nOutput: %s", err, output),
 		}, nil
 	}
-	log.Info("Gitea setup script completed successfully", "output", string(output))
 
-	// Generate and upload SSH key
-	sshKeyPath, err := generateAndUploadSSHKey(req.Parameters)
-	if err != nil {
-		log.Error("Failed to generate and upload SSH key", "error", err)
+	log.Info("Gitea setup script completed", "output", string(output))
+
+	// Parse the JSON output
+	var result struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+
+	// Find the start of the JSON output
+	jsonStart := bytes.LastIndex(output, []byte("{"))
+	if jsonStart == -1 {
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error generating and uploading SSH key: %v", err),
+			ErrorMessage: "Failed to find JSON output in script response",
 		}, nil
 	}
-	log.Info("SSH key generated and uploaded successfully")
+	jsonOutput := output[jsonStart:]
 
-	// Create and clone the repository
-	if err := createAndCloneRepo(req.Parameters["repo_name"], req.Parameters["username"], req.Parameters["password"]); err != nil {
-		log.Error("Failed to create and clone repository", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error creating and cloning repository: %v", err)}, nil
+	if err := json.Unmarshal(jsonOutput, &result); err != nil {
+		log.Error("Failed to parse setup script output", "error", err, "output", string(output))
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to parse setup script output: %v\nRaw output: %s", err, output),
+		}, nil
 	}
-	log.Info("Repository created and cloned successfully")
 
-	// Set local Git configuration
-	if err := setGitConfig(req.Parameters["repo_name"], req.Parameters["git_name"], req.Parameters["email"]); err != nil {
-		log.Error("Failed to set Git config", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error setting Git config: %v", err)}, nil
+	if !result.Success {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: result.Message,
+		}, nil
 	}
-	log.Info("Local Git configuration set successfully")
-
-	// Update remote URL
-	uniqueID := filepath.Base(sshKeyPath)
-	if err := updateRemoteURL(req.Parameters["repo_name"], req.Parameters["username"], uniqueID); err != nil {
-		log.Error("Failed to update remote URL", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error updating remote URL: %v", err)}, nil
-	}
-	log.Info("Remote URL updated successfully")
-
-	// Perform any additional setup tasks here
-	// For example, you might want to add some initial commits or set up branches
-
-	// Create a summary of the setup process
-	summary := fmt.Sprintf(`Gitea setup completed successfully:
-    - Containers started
-    - Initial configuration completed
-    - User registered: %s
-    - SSH key generated and uploaded
-    - Repository created: %s
-    - Local Git configuration set
-    - Remote URL updated
-    `, req.Parameters["username"], req.Parameters["repo_name"])
 
 	return &pb.CommandResponse{
 		Success: true,
-		Result:  summary,
+		Result:  result.Message,
 	}, nil
 }
 
