@@ -716,6 +716,7 @@ func generateAndUploadSSHKey(req *pb.CommandRequest) (*pb.CommandResponse, error
 
 	var result struct {
 		Success bool   `json:"success"`
+		Status  string `json:"status"`
 		Message string `json:"message"`
 	}
 
@@ -733,6 +734,7 @@ func generateAndUploadSSHKey(req *pb.CommandRequest) (*pb.CommandResponse, error
 		}, nil
 	}
 
+	// Parse the last JSON line, which should contain the final status
 	if err := json.Unmarshal([]byte(jsonLines[len(jsonLines)-1]), &result); err != nil {
 		return &pb.CommandResponse{
 			Success:      false,
@@ -740,16 +742,18 @@ func generateAndUploadSSHKey(req *pb.CommandRequest) (*pb.CommandResponse, error
 		}, nil
 	}
 
-	if !result.Success {
+	// Check if the status is "complete" or if success is true
+	if result.Status == "complete" || result.Success {
 		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("SSH key upload failed: %s\nFull log:\n%s", result.Message, strings.Join(jsonLines, "\n")),
+			Success: true,
+			Result:  fmt.Sprintf("SSH key generated and uploaded successfully. Private key path: %s", sshKeyPath),
 		}, nil
 	}
 
+	// If we reach here, it means there was an error
 	return &pb.CommandResponse{
-		Success: true,
-		Result:  fmt.Sprintf("SSH key generated and uploaded successfully. Private key path: %s", sshKeyPath),
+		Success:      false,
+		ErrorMessage: fmt.Sprintf("SSH key upload failed: %s", result.Message),
 	}, nil
 }
 
