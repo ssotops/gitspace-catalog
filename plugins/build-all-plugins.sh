@@ -50,6 +50,7 @@ install_plugin() {
     if [ "$plugin_name" == "scmtea" ]; then
         # Copy individual files
         cp "$plugin_path/setup_gitea.js" "$data_dir/" 2>/dev/null || true
+        cp "$plugin_path/upload_ssh_key.js" "$data_dir/" 2>/dev/null || true
         cp "$plugin_path/default-docker-compose.yaml" "$data_dir/" 2>/dev/null || true
         
         # Copy any other necessary files
@@ -81,6 +82,9 @@ setup_nodejs_env() {
         log "Initializing new package..."
         bun init -y
     fi
+
+    # Ensure the package.json has "type": "module"
+    jq '.type = "module"' package.json > package.json.tmp && mv package.json.tmp package.json
 
     # Install dependencies
     log "Installing dependencies..."
@@ -121,6 +125,7 @@ handle_scmtea_plugin() {
     
     cp "$plugin_dir/default-docker-compose.yaml" "$data_dir/" 2>/dev/null || true
     cp "$plugin_dir/setup_gitea.js" "$data_dir/" 2>/dev/null || true
+    cp "$plugin_dir/upload_ssh_key.js" "$data_dir/" 2>/dev/null || true
     
     log "Copied scmtea plugin files to $data_dir"
 }

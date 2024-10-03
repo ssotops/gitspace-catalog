@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -39,9 +38,9 @@ type DefaultValues struct {
 		Username    string    `toml:"username"`
 		Password    string    `toml:"password"`
 		Email       string    `toml:"email"`
-		GitName     string    `toml:"git_name"`
-		RepoName    string    `toml:"repo_name"`
-		SSHPort     string    `toml:"ssh_port"`
+		// GitName     string    `toml:"git_name"`
+		// RepoName    string    `toml:"repo_name"`
+		// SSHPort     string    `toml:"ssh_port"`
 	} `toml:"gitea"`
 }
 
@@ -78,6 +77,8 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 		return setComposeFile("Enter custom path", customPath)
 	case "setup":
 		return setupGitea(req)
+	case "generate_ssh_key":
+		return generateAndUploadSSHKey(req.Parameters)
 	case "start":
 		return runDockerCompose("up", "-d")
 	case "stop":
@@ -138,12 +139,13 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 				{Name: "username", Description: "Gitea username", Required: true},
 				{Name: "password", Description: "Gitea password (warning: will be unmasked/displayed in terminal for now)", Required: true},
 				{Name: "email", Description: "Gitea email", Required: true},
-				{Name: "git_name", Description: "Name for Git commits", Required: true},
-				{Name: "repo_name", Description: "Repository name", Required: true},
-				{Name: "ssh_port", Description: "SSH port for Gitea (default is 22)", Required: false},
+				// {Name: "git_name", Description: "Name for Git commits", Required: true},
+				// {Name: "repo_name", Description: "Repository name", Required: true},
+				// {Name: "ssh_port", Description: "SSH port for Gitea (default is 22)", Required: false},
 			},
 		},
 		{Label: "Start Gitea", Command: "start"},
+		{Label: "Generate and Upload SSH Key", Command: "generate_ssh_key"},
 		{Label: "Stop Gitea", Command: "stop"},
 		{Label: "Restart Gitea", Command: "restart"},
 		{Label: "Print Gitea Summary", Command: "print_summary"},
@@ -603,34 +605,41 @@ func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 
 	log.Info("Gitea setup script completed", "output", string(output))
 
-	// Parse the JSON output
+	// Parse the JSON output from the script
 	var result struct {
 		Success bool   `json:"success"`
+		Status  string `json:"status"`
 		Message string `json:"message"`
 	}
 
-	// Find the start of the JSON output
-	jsonStart := bytes.LastIndex(output, []byte("{"))
-	if jsonStart == -1 {
+	// Find all JSON lines in the output
+	var jsonLines []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "{") && strings.HasSuffix(line, "}") {
+			jsonLines = append(jsonLines, line)
+		}
+	}
+
+	if len(jsonLines) == 0 {
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: "Failed to find JSON output in script response",
+			ErrorMessage: fmt.Sprintf("No JSON output found in script output: %s", output),
 		}, nil
 	}
-	jsonOutput := output[jsonStart:]
 
-	if err := json.Unmarshal(jsonOutput, &result); err != nil {
-		log.Error("Failed to parse setup script output", "error", err, "output", string(output))
+	// Parse the last JSON line (which should contain the final result)
+	if err := json.Unmarshal([]byte(jsonLines[len(jsonLines)-1]), &result); err != nil {
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Failed to parse setup script output: %v\nRaw output: %s", err, output),
+			ErrorMessage: fmt.Sprintf("Error parsing script output: %v\nOutput: %s", err, output),
 		}, nil
 	}
 
 	if !result.Success {
+		// Include all log lines in the error message for debugging
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: result.Message,
+			ErrorMessage: fmt.Sprintf("SSH key upload failed: %s\nFull log:\n%s", result.Message, strings.Join(jsonLines, "\n")),
 		}, nil
 	}
 
@@ -640,16 +649,15 @@ func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
 	}, nil
 }
 
-func generateAndUploadSSHKey(params map[string]string) (string, error) {
-	// Generate SSH key
+func generateAndUploadSSHKey(params map[string]string) (*pb.CommandResponse, error) {
 	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
 	if err := os.MkdirAll(sshDir, 0700); err != nil {
-		return "", fmt.Errorf("error creating .ssh directory: %v", err)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error creating .ssh directory: %v", err)}, nil
 	}
 
 	uniqueID, err := generateUniqueID()
 	if err != nil {
-		return "", fmt.Errorf("error generating unique ID: %v", err)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error generating unique ID: %v", err)}, nil
 	}
 
 	sshKeyName := fmt.Sprintf("id_ed25519_gitea_%s_%s", params["username"], uniqueID)
@@ -657,46 +665,66 @@ func generateAndUploadSSHKey(params map[string]string) (string, error) {
 
 	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-C", params["email"], "-f", sshKeyPath, "-N", "")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("error generating SSH key: %v\nOutput: %s", err, output)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error generating SSH key: %v\nOutput: %s", err, output)}, nil
 	}
 
-	// Read public key
 	pubKeyBytes, err := ioutil.ReadFile(sshKeyPath + ".pub")
 	if err != nil {
-		return "", fmt.Errorf("error reading public key: %v", err)
+		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error reading public key: %v", err)}, nil
 	}
 
-	// Upload SSH key
-	client := &http.Client{}
-	uploadURL := "http://localhost:3000/api/v1/user/keys"
-	data := map[string]string{
-		"title": "Gitea SSH Key",
-		"key":   string(pubKeyBytes),
-	}
-	jsonData, err := json.Marshal(data)
+	// Run the Puppeteer script to upload the SSH key
+	scriptPath := filepath.Join(os.Getenv("HOME"), ".ssot", "gitspace", "plugins", "data", "scmtea", "upload_ssh_key.js")
+	cmd = exec.Command("node", scriptPath, params["username"], params["password"], string(pubKeyBytes))
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("error marshaling JSON: %v", err)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error executing upload script: %v\nOutput: %s", err, output),
+		}, nil
 	}
 
-	req, err := http.NewRequest("POST", uploadURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("error creating request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(params["username"], params["password"])
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("error uploading SSH key: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := ioutil.ReadAll(resp.Body)
-		return "", fmt.Errorf("SSH key upload failed with status %s: %s", resp.Status, body)
+	// Parse the JSON output from the script
+	var result struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
 	}
 
-	return sshKeyPath, nil
+	// Find the last JSON line in the output
+	lines := strings.Split(string(output), "\n")
+	var lastJSONLine string
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "{") && strings.HasSuffix(lines[i], "}") {
+			lastJSONLine = lines[i]
+			break
+		}
+	}
+
+	if lastJSONLine == "" {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("No JSON output found in script output: %s", output),
+		}, nil
+	}
+
+	if err := json.Unmarshal([]byte(lastJSONLine), &result); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error parsing script output: %v\nOutput: %s", err, output),
+		}, nil
+	}
+
+	if !result.Success {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("SSH key upload failed: %s\nFull output:\n%s", result.Message, output),
+		}, nil
+	}
+
+	return &pb.CommandResponse{
+		Success: true,
+		Result:  fmt.Sprintf("SSH key generated and uploaded successfully. Private key path: %s", sshKeyPath),
+	}, nil
 }
 
 func waitForGitea() error {
