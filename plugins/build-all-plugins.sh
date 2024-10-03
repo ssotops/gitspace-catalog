@@ -46,23 +46,15 @@ install_plugin() {
     # Copy the plugin binary to the installation directory
     cp "$plugin_path/$plugin_name" "$install_dir/"
     
-    # Copy additional files for scmtea plugin
+    # Copy all files and directories recursively from the plugin directory to the data directory
+    cp -R "$plugin_path"/* "$data_dir/"
+    
+    # Set up Node.js environment for scmtea plugin
     if [ "$plugin_name" == "scmtea" ]; then
-        # Copy individual files
-        cp "$plugin_path/setup_gitea.js" "$data_dir/" 2>/dev/null || true
-        cp "$plugin_path/upload_ssh_key.js" "$data_dir/" 2>/dev/null || true
-        cp "$plugin_path/default-docker-compose.yaml" "$data_dir/" 2>/dev/null || true
-        
-        # Copy any other necessary files
-        cp "$plugin_path"/*.toml "$install_dir/" 2>/dev/null || true
-        cp "$plugin_path"/*.yaml "$install_dir/" 2>/dev/null || true
-        cp "$plugin_path"/*.js "$install_dir/" 2>/dev/null || true
-
-        # Set up Node.js environment
         setup_nodejs_env "$data_dir"
     fi
     
-    log "Installed $plugin_name to $install_dir"
+    log "Installed $plugin_name to $install_dir and copied all files to $data_dir"
 }
 
 setup_nodejs_env() {
@@ -84,7 +76,11 @@ setup_nodejs_env() {
     fi
 
     # Ensure the package.json has "type": "module"
-    jq '.type = "module"' package.json > package.json.tmp && mv package.json.tmp package.json
+    if command -v jq &> /dev/null; then
+        jq '.type = "module"' package.json > package.json.tmp && mv package.json.tmp package.json
+    else
+        log "jq is not installed. Manually ensure that package.json has \"type\": \"module\""
+    fi
 
     # Install dependencies
     log "Installing dependencies..."
@@ -111,25 +107,6 @@ update_gitignore() {
     fi
 }
 
-# Function to handle Scmtea plugin-specific tasks
-handle_scmtea_plugin() {
-    local plugin_dir="$1"
-    local plugin_name="$2"
-    
-    # Remove trailing slash from plugin_dir if present
-    plugin_dir="${plugin_dir%/}"
-    
-    # Copy files to the plugin's data directory
-    local data_dir="$HOME/.ssot/gitspace/plugins/data/scmtea"
-    mkdir -p "$data_dir"
-    
-    cp "$plugin_dir/default-docker-compose.yaml" "$data_dir/" 2>/dev/null || true
-    cp "$plugin_dir/setup_gitea.js" "$data_dir/" 2>/dev/null || true
-    cp "$plugin_dir/upload_ssh_key.js" "$data_dir/" 2>/dev/null || true
-    
-    log "Copied scmtea plugin files to $data_dir"
-}
-
 # Build all plugins in the catalog
 build_plugins() {
     for plugin_dir in */; do
@@ -146,11 +123,6 @@ build_plugins() {
                     success "Plugin $plugin_name built successfully."
                     install_plugin "$plugin_name" "$PWD"
                     update_gitignore "$plugin_name"
-                    
-                    # Handle Scmtea plugin-specific tasks
-                    if [ "$plugin_name" == "scmtea" ]; then
-                        handle_scmtea_plugin "$PWD" "$plugin_name"
-                    fi
                 else
                     error "Failed to build plugin $plugin_name."
                     exit 1

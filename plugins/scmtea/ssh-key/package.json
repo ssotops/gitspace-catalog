@@ -12,6 +12,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "playwright": "^1.47.2",
     "puppeteer": "^23.5.0"
   }
 }
