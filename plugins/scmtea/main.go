@@ -60,8 +60,10 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 			Success: true,
 			Result:  "Select an option from the Docker Compose submenu",
 		}, nil
+
 	case "set_compose_file_default":
 		return setComposeFile("Use default", "")
+
 	case "set_compose_file_custom":
 		customPath, ok := req.Parameters["custom_path"]
 		if !ok || customPath == "" {
@@ -71,16 +73,22 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 			}, nil
 		}
 		return setComposeFile("Enter custom path", customPath)
+
 	case "setup":
 		return setupGitea(req)
+
 	case "generate_ssh_key":
 		return generateAndUploadSSHKey(req)
+
 	case "start":
 		return runDockerCompose("up", "-d")
+
 	case "stop":
 		return runDockerCompose("down")
+
 	case "restart":
 		return runDockerCompose("restart")
+
 	case "print_summary":
 		summary, err := printGiteaSummary(p.logger)
 		if err != nil {
@@ -93,17 +101,58 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 			Success: true,
 			Result:  summary,
 		}, nil
+
 	case "git_config_summary":
 		return gitConfigSummary()
+
 	case "delete_containers_images":
 		return deleteContainersAndImages()
+
 	case "delete_volumes":
 		return deleteVolumes()
+
 	case "go_back":
 		return &pb.CommandResponse{
 			Success: true,
 			Result:  "Returned to previous menu",
 		}, nil
+
+	// Backup Management Commands
+	case "configure_backup":
+		if err := validateBackupConfig(req.Parameters); err != nil {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Invalid backup configuration: %v", err),
+			}, nil
+		}
+		return p.handleBackupCommands(req)
+
+	case "create_backup":
+		return p.handleBackupCommands(req)
+
+	case "set_backup_schedule":
+		schedule, ok := req.Parameters["schedule"]
+		if !ok || schedule == "" {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Backup schedule (cron expression) is required",
+			}, nil
+		}
+		return p.handleBackupCommands(req)
+
+	case "restore_backup":
+		backupFile, ok := req.Parameters["backup_file"]
+		if !ok || backupFile == "" {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Backup file path is required",
+			}, nil
+		}
+		return p.handleBackupCommands(req)
+
+	case "view_backup_summary":
+		return p.handleBackupCommands(req)
+
 	default:
 		return &pb.CommandResponse{
 			Success:      false,
@@ -118,13 +167,87 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 			Label:   "Set Docker Compose File",
 			Command: "set_compose_file",
 			SubMenu: []gsplug.MenuOption{
-				{Label: "Use Default Docker Compose File", Command: "set_compose_file_default"},
+				{
+					Label:   "Use Default Docker Compose File",
+					Command: "set_compose_file_default",
+				},
 				{
 					Label:   "Enter Custom Docker Compose Path",
 					Command: "set_compose_file_custom",
 					Parameters: []gsplug.ParameterInfo{
-						{Name: "custom_path", Description: "Path to custom Docker Compose file", Required: true},
+						{
+							Name:        "custom_path",
+							Description: "Path to custom Docker Compose file",
+							Required:    true,
+						},
 					},
+				},
+			},
+		},
+		{
+			Label:   "Backup Management",
+			Command: "backup_menu",
+			SubMenu: []gsplug.MenuOption{
+				{
+					Label:   "Configure Backup Storage",
+					Command: "configure_backup",
+					Parameters: []gsplug.ParameterInfo{
+						{
+							Name:        "s3_bucket",
+							Description: "S3 bucket name",
+							Required:    true,
+						},
+						{
+							Name:        "s3_path",
+							Description: "Path within bucket",
+							Required:    false,
+						},
+						{
+							Name:        "access_key",
+							Description: "S3 access key",
+							Required:    true,
+						},
+						{
+							Name:        "secret_key",
+							Description: "S3 secret key",
+							Required:    true,
+						},
+						{
+							Name:        "endpoint",
+							Description: "S3 endpoint (e.g., nyc3.digitaloceanspaces.com)",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Label:   "Set Backup Schedule",
+					Command: "set_backup_schedule",
+					Parameters: []gsplug.ParameterInfo{
+						{
+							Name:        "schedule",
+							Description: "Cron expression (e.g., '0 2 * * *' for daily at 2 AM)",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Label:   "Create Backup Now",
+					Command: "create_backup",
+				},
+				{
+					Label:   "Restore from Backup",
+					Command: "restore_backup",
+					Parameters: []gsplug.ParameterInfo{
+						{
+							Name:        "backup_file",
+							Description: "Path to backup file",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Label:   "View Backup Summary",
+					Command: "view_backup_summary",
 				},
 			},
 		},
@@ -132,27 +255,72 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 			Label:   "Setup Gitea",
 			Command: "setup",
 			Parameters: []gsplug.ParameterInfo{
-				{Name: "username", Description: "Gitea username", Required: true},
-				{Name: "password", Description: "Gitea password", Required: true},
-				{Name: "email", Description: "Gitea email", Required: true},
+				{
+					Name:        "username",
+					Description: "Gitea username",
+					Required:    true,
+				},
+				{
+					Name:        "password",
+					Description: "Gitea password",
+					Required:    true,
+				},
+				{
+					Name:        "email",
+					Description: "Gitea email",
+					Required:    true,
+				},
 			},
 		},
-		{Label: "Start Gitea", Command: "start"},
+		{
+			Label:   "Start Gitea",
+			Command: "start",
+		},
 		{
 			Label:   "Generate and Upload SSH Key",
 			Command: "generate_ssh_key",
 			Parameters: []gsplug.ParameterInfo{
-				{Name: "username", Description: "Gitea username", Required: true},
-				{Name: "password", Description: "Gitea password", Required: true},
-				{Name: "email", Description: "Gitea email", Required: true},
+				{
+					Name:        "username",
+					Description: "Gitea username",
+					Required:    true,
+				},
+				{
+					Name:        "password",
+					Description: "Gitea password",
+					Required:    true,
+				},
+				{
+					Name:        "email",
+					Description: "Gitea email",
+					Required:    true,
+				},
 			},
 		},
-		{Label: "Stop Gitea", Command: "stop"},
-		{Label: "Restart Gitea", Command: "restart"},
-		{Label: "Print Gitea Summary", Command: "print_summary"},
-		{Label: "Print Git Config Summary", Command: "git_config_summary"},
-		{Label: "Delete Gitea Containers and Images", Command: "delete_containers_images"},
-		{Label: "Delete Volumes", Command: "delete_volumes"},
+		{
+			Label:   "Stop Gitea",
+			Command: "stop",
+		},
+		{
+			Label:   "Restart Gitea",
+			Command: "restart",
+		},
+		{
+			Label:   "Print Gitea Summary",
+			Command: "print_summary",
+		},
+		{
+			Label:   "Print Git Config Summary",
+			Command: "git_config_summary",
+		},
+		{
+			Label:   "Delete Gitea Containers and Images",
+			Command: "delete_containers_images",
+		},
+		{
+			Label:   "Delete Volumes",
+			Command: "delete_volumes",
+		},
 	}
 
 	menuBytes, err := json.Marshal(menuOptions)
@@ -163,6 +331,17 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 	return &pb.MenuResponse{
 		MenuData: menuBytes,
 	}, nil
+}
+
+// Helper function to validate backup configuration parameters
+func validateBackupConfig(params map[string]string) error {
+	required := []string{"s3_bucket", "access_key", "secret_key", "endpoint"}
+	for _, param := range required {
+		if value, exists := params[param]; !exists || value == "" {
+			return fmt.Errorf("missing required parameter: %s", param)
+		}
+	}
+	return nil
 }
 
 func setComposeFile(option, customPath string) (*pb.CommandResponse, error) {

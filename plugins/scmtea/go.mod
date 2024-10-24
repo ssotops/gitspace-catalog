@@ -7,6 +7,7 @@ require (
 	github.com/pelletier/go-toml v1.9.5
 	github.com/ssotops/gitspace-plugin-sdk v0.0.0-20241001023129-8c91f9f5d979
 	google.golang.org/protobuf v1.35.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
