@@ -31,6 +31,8 @@ go.work.sum
 # Auto-generated plugin binaries to ignore
 plugins/scmtea/scmtea
 
+gitea-backup-config.env
+
 # Terraform files
 *.tfstate
 *.tfstate.*
