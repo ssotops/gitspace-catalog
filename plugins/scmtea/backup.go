@@ -44,6 +44,45 @@ func (p *ScmteaPlugin) handleBackupCommands(req *pb.CommandRequest) (*pb.Command
 }
 
 func (p *ScmteaPlugin) configureBackup(req *pb.CommandRequest) (*pb.CommandResponse, error) {
+	// First ensure we have a valid compose file path and default compose file
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to get home directory: %v", err),
+		}, nil
+	}
+
+	pluginDataDir := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea")
+	composePath := filepath.Join(pluginDataDir, "docker-compose.yaml")
+
+	// Ensure plugin data directory exists
+	if err := os.MkdirAll(pluginDataDir, 0755); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to create plugin data directory: %v", err),
+		}, nil
+	}
+
+	// Check if compose file exists, if not copy default
+	if _, err := os.Stat(composePath); os.IsNotExist(err) {
+		defaultCompose, err := defaultComposeFile.ReadFile("default-docker-compose.yaml")
+		if err != nil {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to read default compose file: %v", err),
+			}, nil
+		}
+
+		if err := os.WriteFile(composePath, defaultCompose, 0644); err != nil {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to write compose file: %v", err),
+			}, nil
+		}
+	}
+
+	// Create backup config
 	config := BackupConfig{
 		S3Bucket:    req.Parameters["s3_bucket"],
 		S3Path:      req.Parameters["s3_path"],
@@ -55,17 +94,8 @@ func (p *ScmteaPlugin) configureBackup(req *pb.CommandRequest) (*pb.CommandRespo
 		Compression: "gz",
 	}
 
-	// Get compose path
-	composePath, err := getComposePath()
-	if err != nil {
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Failed to get compose path: %v", err),
-		}, nil
-	}
-
 	// Read existing compose file
-	content, err := ioutil.ReadFile(composePath)
+	content, err := os.ReadFile(composePath)
 	if err != nil {
 		return &pb.CommandResponse{
 			Success:      false,
@@ -82,8 +112,13 @@ func (p *ScmteaPlugin) configureBackup(req *pb.CommandRequest) (*pb.CommandRespo
 		}, nil
 	}
 
-	// Add backup service
+	// Initialize services map if it doesn't exist
+	if composeConfig["services"] == nil {
+		composeConfig["services"] = make(map[string]interface{})
+	}
 	services := composeConfig["services"].(map[string]interface{})
+
+	// Add backup service
 	services["backup"] = map[string]interface{}{
 		"image":   "offen/docker-volume-backup:latest",
 		"restart": "always",
@@ -124,7 +159,7 @@ func (p *ScmteaPlugin) configureBackup(req *pb.CommandRequest) (*pb.CommandRespo
 		}, nil
 	}
 
-	if err := ioutil.WriteFile(composePath, updatedContent, 0644); err != nil {
+	if err := os.WriteFile(composePath, updatedContent, 0644); err != nil {
 		return &pb.CommandResponse{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("Failed to write compose file: %v", err),
@@ -319,7 +354,7 @@ func loadBackupConfig() (BackupConfig, error) {
 	}
 
 	configPath := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea", "backup_config.toml")
-	
+
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return config, nil
 	}

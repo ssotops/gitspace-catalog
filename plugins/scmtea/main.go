@@ -164,23 +164,97 @@ func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandRespon
 func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 	menuOptions := []gsplug.MenuOption{
 		{
-			Label:   "Set Docker Compose File",
-			Command: "set_compose_file",
+			Label:   "Installation",
+			Command: "installation_menu",
 			SubMenu: []gsplug.MenuOption{
 				{
-					Label:   "Use Default Docker Compose File",
-					Command: "set_compose_file_default",
+					Label:   "Set Docker Compose File",
+					Command: "set_compose_file",
+					SubMenu: []gsplug.MenuOption{
+						{
+							Label:   "Use Default Docker Compose File",
+							Command: "set_compose_file_default",
+						},
+						{
+							Label:   "Enter Custom Docker Compose Path",
+							Command: "set_compose_file_custom",
+							Parameters: []gsplug.ParameterInfo{
+								{
+									Name:        "custom_path",
+									Description: "Path to custom Docker Compose file",
+									Required:    true,
+								},
+							},
+						},
+					},
 				},
 				{
-					Label:   "Enter Custom Docker Compose Path",
-					Command: "set_compose_file_custom",
+					Label:   "Setup Gitea",
+					Command: "setup",
 					Parameters: []gsplug.ParameterInfo{
 						{
-							Name:        "custom_path",
-							Description: "Path to custom Docker Compose file",
+							Name:        "username",
+							Description: "Gitea username",
+							Required:    true,
+						},
+						{
+							Name:        "password",
+							Description: "Gitea password",
+							Required:    true,
+						},
+						{
+							Name:        "email",
+							Description: "Gitea email",
 							Required:    true,
 						},
 					},
+				},
+				{
+					Label:   "Generate and Upload SSH Key",
+					Command: "generate_ssh_key",
+					Parameters: []gsplug.ParameterInfo{
+						{
+							Name:        "username",
+							Description: "Gitea username",
+							Required:    true,
+						},
+						{
+							Name:        "password",
+							Description: "Gitea password",
+							Required:    true,
+						},
+						{
+							Name:        "email",
+							Description: "Gitea email",
+							Required:    true,
+						},
+					},
+				},
+			},
+		},
+		{
+			Label:   "Lifecycle Management",
+			Command: "lifecycle_menu",
+			SubMenu: []gsplug.MenuOption{
+				{
+					Label:   "Start Gitea",
+					Command: "start",
+				},
+				{
+					Label:   "Stop Gitea",
+					Command: "stop",
+				},
+				{
+					Label:   "Restart Gitea",
+					Command: "restart",
+				},
+				{
+					Label:   "Delete Gitea Containers and Images",
+					Command: "delete_containers_images",
+				},
+				{
+					Label:   "Delete Volumes",
+					Command: "delete_volumes",
 				},
 			},
 		},
@@ -245,81 +319,21 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 						},
 					},
 				},
-				{
-					Label:   "View Backup Summary",
-					Command: "view_backup_summary",
-				},
 			},
 		},
 		{
-			Label:   "Setup Gitea",
-			Command: "setup",
-			Parameters: []gsplug.ParameterInfo{
+			Label:   "Information",
+			Command: "info_menu",
+			SubMenu: []gsplug.MenuOption{
 				{
-					Name:        "username",
-					Description: "Gitea username",
-					Required:    true,
+					Label:   "Print Gitea Summary",
+					Command: "print_summary",
 				},
 				{
-					Name:        "password",
-					Description: "Gitea password",
-					Required:    true,
-				},
-				{
-					Name:        "email",
-					Description: "Gitea email",
-					Required:    true,
+					Label:   "Print Git Config Summary",
+					Command: "git_config_summary",
 				},
 			},
-		},
-		{
-			Label:   "Start Gitea",
-			Command: "start",
-		},
-		{
-			Label:   "Generate and Upload SSH Key",
-			Command: "generate_ssh_key",
-			Parameters: []gsplug.ParameterInfo{
-				{
-					Name:        "username",
-					Description: "Gitea username",
-					Required:    true,
-				},
-				{
-					Name:        "password",
-					Description: "Gitea password",
-					Required:    true,
-				},
-				{
-					Name:        "email",
-					Description: "Gitea email",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Label:   "Stop Gitea",
-			Command: "stop",
-		},
-		{
-			Label:   "Restart Gitea",
-			Command: "restart",
-		},
-		{
-			Label:   "Print Gitea Summary",
-			Command: "print_summary",
-		},
-		{
-			Label:   "Print Git Config Summary",
-			Command: "git_config_summary",
-		},
-		{
-			Label:   "Delete Gitea Containers and Images",
-			Command: "delete_containers_images",
-		},
-		{
-			Label:   "Delete Volumes",
-			Command: "delete_volumes",
 		},
 	}
 

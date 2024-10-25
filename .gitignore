@@ -30,3 +30,26 @@ go.work.sum
 
 # Auto-generated plugin binaries to ignore
 plugins/scmtea/scmtea
+
+# Terraform files
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Exclude any sensitive secrets files
+*secret*.tfvars
+*secrets*.tfvars
+*key*.tfvars
+*keys*.tfvars
+credentials*.tfvars
