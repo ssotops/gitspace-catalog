@@ -1,64 +1,145 @@
-import puppeteer from 'puppeteer';
+import { chromium } from 'playwright';
+
+// Helper to send structured progress messages to stdout
+function emitProgress(status, step, details = '') {
+  const message = JSON.stringify({
+    type: 'progress',
+    payload: {
+      status,
+      step,
+      details,
+      timestamp: new Date().toISOString()
+    }
+  });
+  console.log(message);
+}
 
 async function setupGitea(username, email, password) {
-  const browser = await puppeteer.launch({ headless: false });
-  const page = await browser.newPage();
-  const timeout = 30000; // 30 seconds timeout
-  page.setDefaultTimeout(timeout);
+  let browser;
+  let context;
+  let page;
 
   try {
-    await page.setViewport({ width: 1975, height: 1302 });
+    emitProgress('started', 'browser', 'Launching browser');
+    browser = await chromium.launch({
+      headless: false,
+      args: ['--start-maximized']
+    });
 
-    console.log('Navigating to Gitea installation page...');
-    await page.goto('http://localhost:3000/', { waitUntil: 'networkidle0' });
+    // Create context with larger viewport
+    context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      recordVideo: { dir: 'videos/' }
+    });
 
-    console.log('Opening Administrator Account Settings...');
-    await page.waitForSelector('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/summary');
-    await page.click('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/summary');
+    page = await context.newPage();
+    
+    emitProgress('started', 'navigation', 'Loading Gitea initial setup page');
+    await page.goto('http://localhost:3000/', {
+      waitUntil: 'networkidle',
+      timeout: 60000
+    });
+    emitProgress('completed', 'navigation', 'Initial page loaded');
 
-    console.log('Filling in Administrator Username...');
-    await page.waitForSelector('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[1]/input');
-    await page.type('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[1]/input', username);
+    emitProgress('started', 'setup', 'Opening administrator settings');
+    await page.click('div.ui.container form details >> text=Admin Account Settings');
+    emitProgress('completed', 'setup', 'Administrator section expanded');
 
-    console.log('Filling in Email Address...');
-    await page.waitForSelector('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[2]/input');
-    await page.type('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[2]/input', email);
+    // Fill in administrator account details with pauses for visibility
+    emitProgress('started', 'input', 'Entering administrator details');
+    
+    await page.fill('input[name="admin_name"]', username);
+    emitProgress('progress', 'input', 'Username entered');
+    await page.waitForTimeout(500);
 
-    console.log('Filling in Password...');
-    await page.waitForSelector('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[3]/input');
-    await page.type('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[3]/input', password);
+    await page.fill('input[name="admin_email"]', email);
+    emitProgress('progress', 'input', 'Email entered');
+    await page.waitForTimeout(500);
 
-    console.log('Confirming Password...');
-    await page.waitForSelector('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[4]/input');
-    await page.type('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[4]/input', password);
+    await page.fill('input[name="admin_password"]', password);
+    await page.fill('input[name="admin_confirm_password"]', password);
+    emitProgress('progress', 'input', 'Password configured');
+    await page.waitForTimeout(500);
 
-    console.log('Clicking Install Gitea button...');
-    await page.waitForSelector('xpath=/html/body/div[1]/div/div/div/div/form/div[18]/div[2]/button');
-    await page.click('xpath=/html/body/div[1]/div/div/div/div/form/div[18]/div[2]/button');
+    emitProgress('started', 'installation', 'Starting Gitea installation');
+    
+    // Click install and wait for completion
+    const [response] = await Promise.all([
+      page.waitForNavigation({
+        waitUntil: 'networkidle',
+        timeout: 120000
+      }),
+      page.click('button >> text=Install Gitea')
+    ]);
 
-    console.log('Waiting for navigation after installation...');
-    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 });
+    // Take a screenshot of the completed installation
+    await page.screenshot({ 
+      path: 'gitea-setup-complete.png',
+      fullPage: true 
+    });
 
-    console.log('Gitea installation completed successfully');
-    return { success: true, message: 'Gitea installation completed successfully' };
+    emitProgress('completed', 'installation', 'Gitea installation completed successfully');
+    
+    return {
+      success: true,
+      message: 'Gitea installation completed successfully',
+      screenshot: 'gitea-setup-complete.png'
+    };
+
   } catch (error) {
-    console.error('Error during Gitea setup:', error);
-    await page.screenshot({ path: 'error-screenshot.png', fullPage: true });
-    return { success: false, message: `Gitea setup failed: ${error.message}. Screenshot saved as error-screenshot.png` };
+    emitProgress('error', 'setup', `Setup failed: ${error.message}`);
+    
+    if (page) {
+      await page.screenshot({ 
+        path: 'gitea-setup-error.png',
+        fullPage: true 
+      });
+    }
+
+    return {
+      success: false,
+      message: `Setup failed: ${error.message}`,
+      screenshot: 'gitea-setup-error.png'
+    };
+
   } finally {
-    await browser.close();
+    if (context) {
+      await context.close();
+    }
+    if (browser) {
+      emitProgress('cleanup', 'browser', 'Closing browser');
+      await browser.close();
+    }
   }
 }
 
 // Main execution
 const [, , username, email, password] = process.argv;
+
+if (!username || !email || !password) {
+  console.error(JSON.stringify({
+    type: 'error',
+    payload: {
+      message: 'Missing required arguments. Usage: node setup_gitea.js <username> <email> <password>'
+    }
+  }));
+  process.exit(1);
+}
+
 setupGitea(username, email, password)
-  .then((result) => {
-    console.log(JSON.stringify(result));
+  .then(result => {
+    console.log(JSON.stringify({
+      type: 'result',
+      payload: result
+    }));
+    process.exit(result.success ? 0 : 1);
   })
   .catch(error => {
-    console.error('Setup failed:', JSON.stringify({ success: false, message: error.message }));
+    console.error(JSON.stringify({
+      type: 'error',
+      payload: {
+        message: `Unhandled error: ${error.message}`
+      }
+    }));
     process.exit(1);
   });
-
-export { setupGitea };

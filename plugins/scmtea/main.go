@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,6 +34,11 @@ const (
 	defaultComposeFileName = "default-docker-compose.yaml"
 )
 
+// Plugin structures
+type ScmteaPlugin struct {
+	logger *logger.RateLimitedLogger
+}
+
 type DefaultValues struct {
 	Gitea struct {
 		LastUpdated time.Time `toml:"last_updated"`
@@ -41,124 +48,20 @@ type DefaultValues struct {
 	} `toml:"gitea"`
 }
 
-type ScmteaPlugin struct {
-	logger *logger.RateLimitedLogger
+// Progress message structure
+type ProgressMessage struct {
+	Status  string `json:"status"`
+	Step    string `json:"step"`
+	Message string `json:"message"`
 }
 
+// Plugin interface methods
 func (p *ScmteaPlugin) GetPluginInfo(req *pb.PluginInfoRequest) (*pb.PluginInfo, error) {
 	log.Info("GetPluginInfo called")
 	return &pb.PluginInfo{
 		Name:    "Scmtea Plugin",
 		Version: "1.0.0",
 	}, nil
-}
-
-func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandResponse, error) {
-	switch req.Command {
-	case "set_compose_file":
-		return &pb.CommandResponse{
-			Success: true,
-			Result:  "Select an option from the Docker Compose submenu",
-		}, nil
-
-	case "set_compose_file_default":
-		return setComposeFile("Use default", "")
-
-	case "set_compose_file_custom":
-		customPath, ok := req.Parameters["custom_path"]
-		if !ok || customPath == "" {
-			return &pb.CommandResponse{
-				Success:      false,
-				ErrorMessage: "Custom path is required for set_compose_file_custom command",
-			}, nil
-		}
-		return setComposeFile("Enter custom path", customPath)
-
-	case "setup":
-		return setupGitea(req)
-
-	case "generate_ssh_key":
-		return generateAndUploadSSHKey(req)
-
-	case "start":
-		return runDockerCompose("up", "-d")
-
-	case "stop":
-		return runDockerCompose("down")
-
-	case "restart":
-		return runDockerCompose("restart")
-
-	case "print_summary":
-		summary, err := printGiteaSummary(p.logger)
-		if err != nil {
-			return &pb.CommandResponse{
-				Success:      false,
-				ErrorMessage: fmt.Sprintf("Failed to print Gitea summary: %v", err),
-			}, nil
-		}
-		return &pb.CommandResponse{
-			Success: true,
-			Result:  summary,
-		}, nil
-
-	case "git_config_summary":
-		return gitConfigSummary()
-
-	case "delete_containers_images":
-		return deleteContainersAndImages()
-
-	case "delete_volumes":
-		return deleteVolumes()
-
-	case "go_back":
-		return &pb.CommandResponse{
-			Success: true,
-			Result:  "Returned to previous menu",
-		}, nil
-
-	// Backup Management Commands
-	case "configure_backup":
-		if err := validateBackupConfig(req.Parameters); err != nil {
-			return &pb.CommandResponse{
-				Success:      false,
-				ErrorMessage: fmt.Sprintf("Invalid backup configuration: %v", err),
-			}, nil
-		}
-		return p.handleBackupCommands(req)
-
-	case "create_backup":
-		return p.handleBackupCommands(req)
-
-	case "set_backup_schedule":
-		schedule, ok := req.Parameters["schedule"]
-		if !ok || schedule == "" {
-			return &pb.CommandResponse{
-				Success:      false,
-				ErrorMessage: "Backup schedule (cron expression) is required",
-			}, nil
-		}
-		return p.handleBackupCommands(req)
-
-	case "restore_backup":
-		backupFile, ok := req.Parameters["backup_file"]
-		if !ok || backupFile == "" {
-			return &pb.CommandResponse{
-				Success:      false,
-				ErrorMessage: "Backup file path is required",
-			}, nil
-		}
-		return p.handleBackupCommands(req)
-
-	case "view_backup_summary":
-		return p.handleBackupCommands(req)
-
-	default:
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: "Unknown command",
-		}, nil
-	}
 }
 
 func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
@@ -347,15 +250,447 @@ func (p *ScmteaPlugin) GetMenu(req *pb.MenuRequest) (*pb.MenuResponse, error) {
 	}, nil
 }
 
-// Helper function to validate backup configuration parameters
-func validateBackupConfig(params map[string]string) error {
-	required := []string{"s3_bucket", "access_key", "secret_key", "endpoint"}
-	for _, param := range required {
-		if value, exists := params[param]; !exists || value == "" {
-			return fmt.Errorf("missing required parameter: %s", param)
+func (p *ScmteaPlugin) ExecuteCommand(req *pb.CommandRequest) (*pb.CommandResponse, error) {
+	p.logger.Info("Executing command", "command", req.Command, "parameters", req.Parameters)
+
+	switch req.Command {
+	case "set_compose_file":
+		return &pb.CommandResponse{
+			Success: true,
+			Result:  "Select an option from the Docker Compose submenu",
+		}, nil
+
+	case "set_compose_file_default":
+		p.logger.Info("Setting default compose file")
+		return setComposeFile("Use default", "")
+
+	case "set_compose_file_custom":
+		customPath, ok := req.Parameters["custom_path"]
+		if !ok || customPath == "" {
+			p.logger.Error("Missing custom path parameter")
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Custom path is required for set_compose_file_custom command",
+			}, nil
+		}
+		p.logger.Info("Setting custom compose file", "path", customPath)
+		return setComposeFile("Enter custom path", customPath)
+
+	case "setup":
+		p.logger.Info("Starting Gitea setup process")
+
+		// Pre-setup environment checks
+		// 1. Check if Node.js is available
+		if _, err := exec.LookPath("node"); err != nil {
+			p.logger.Error("Node.js not found in PATH", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Node.js is required but not found in PATH. Please install Node.js and try again.",
+			}, nil
+		}
+		p.logger.Info("Node.js found in PATH")
+
+		// 2. Check if Docker is running
+		dockerCmd := exec.Command("docker", "info")
+		if err := dockerCmd.Run(); err != nil {
+			p.logger.Error("Docker is not running", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Docker is not running. Please start Docker and try again.",
+			}, nil
+		}
+		p.logger.Info("Docker is running")
+
+		// 3. Check if port 3000 is available
+		conn, err := net.DialTimeout("tcp", "localhost:3000", time.Second)
+		if err == nil {
+			conn.Close()
+			p.logger.Error("Port 3000 is already in use")
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Port 3000 is already in use. Please ensure no other service is using this port.",
+			}, nil
+		}
+		p.logger.Info("Port 3000 is available")
+
+		// 4. Get setup script path and verify it exists
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			p.logger.Error("Failed to get home directory", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to get home directory: %v", err),
+			}, nil
+		}
+
+		setupScriptPath := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea", "setup_gitea.js")
+		if _, err := os.Stat(setupScriptPath); os.IsNotExist(err) {
+			p.logger.Error("Setup script not found", "path", setupScriptPath)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("setup_gitea.js not found at %s. Please ensure the plugin is properly installed.", setupScriptPath),
+			}, nil
+		}
+		p.logger.Info("Setup script found", "path", setupScriptPath)
+
+		// Validate required parameters
+		for _, param := range []string{"username", "password", "email"} {
+			if _, ok := req.Parameters[param]; !ok {
+				p.logger.Error("Missing required parameter", "param", param)
+				return &pb.CommandResponse{
+					Success:      false,
+					ErrorMessage: fmt.Sprintf("Missing required parameter: %s", param),
+				}, nil
+			}
+		}
+		p.logger.Info("All required parameters present")
+
+		// Start Docker containers
+		p.logger.Info("Starting Docker containers")
+		startResponse, err := runDockerCompose("up", "-d")
+		if err != nil {
+			p.logger.Error("Failed to start Docker containers", "error", err)
+			return startResponse, nil
+		}
+		p.logger.Info("Docker containers started successfully")
+
+		// Define progress callback for health check
+		sendProgress := func(status, step, message string) {
+			p.logger.Info("Setup progress",
+				"status", status,
+				"step", step,
+				"message", message)
+		}
+
+		// Wait for Gitea to be available
+		p.logger.Info("Waiting for Gitea to be ready")
+		if err := waitForGiteaWithProgress(sendProgress); err != nil {
+			p.logger.Error("Failed waiting for Gitea", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Error waiting for Gitea to start: %v", err),
+			}, nil
+		}
+		p.logger.Info("Gitea is now ready")
+
+		// Run setup script
+		p.logger.Info("Starting Gitea setup script",
+			"username", req.Parameters["username"],
+			"email", req.Parameters["email"])
+
+		cmd := exec.Command("node", setupScriptPath,
+			req.Parameters["username"],
+			req.Parameters["email"],
+			req.Parameters["password"])
+
+		// Set up output pipes
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			p.logger.Error("Failed to create stdout pipe", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to create stdout pipe: %v", err),
+			}, nil
+		}
+
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			p.logger.Error("Failed to create stderr pipe", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to create stderr pipe: %v", err),
+			}, nil
+		}
+
+		// Start the command
+		p.logger.Info("Executing setup script")
+		if err := cmd.Start(); err != nil {
+			p.logger.Error("Failed to start setup script", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to start setup script: %v", err),
+			}, nil
+		}
+
+		// Process stdout in real-time
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				line := scanner.Text()
+
+				// Try to parse as JSON progress message
+				var progressMsg struct {
+					Type    string `json:"type"`
+					Payload struct {
+						Status  string `json:"status"`
+						Step    string `json:"step"`
+						Details string `json:"details"`
+					} `json:"payload"`
+				}
+
+				if err := json.Unmarshal([]byte(line), &progressMsg); err != nil {
+					// Not JSON, log as plain text
+					p.logger.Info("Setup output", "message", line)
+				} else {
+					// Log structured progress message
+					p.logger.Info("Setup progress",
+						"type", progressMsg.Type,
+						"status", progressMsg.Payload.Status,
+						"step", progressMsg.Payload.Step,
+						"details", progressMsg.Payload.Details)
+				}
+			}
+
+			if err := scanner.Err(); err != nil {
+				p.logger.Error("Error reading setup script output", "error", err)
+			}
+		}()
+
+		// Process stderr in real-time
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				p.logger.Error("Setup script error", "message", scanner.Text())
+			}
+
+			if err := scanner.Err(); err != nil {
+				p.logger.Error("Error reading setup script stderr", "error", err)
+			}
+		}()
+
+		// Wait for completion
+		p.logger.Info("Waiting for setup script to complete")
+		if err := cmd.Wait(); err != nil {
+			p.logger.Error("Setup script failed", "error", err)
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Setup script failed: %v", err),
+			}, nil
+		}
+
+		p.logger.Info("Setup completed successfully")
+		return &pb.CommandResponse{
+			Success: true,
+			Result:  "Gitea setup completed successfully",
+		}, nil
+
+	case "generate_ssh_key":
+		return generateAndUploadSSHKey(req)
+
+	case "start":
+		return runDockerCompose("up", "-d")
+
+	case "stop":
+		return runDockerCompose("down")
+
+	case "restart":
+		return runDockerCompose("restart")
+
+	case "delete_containers_images":
+		return deleteContainersAndImages()
+
+	case "delete_volumes":
+		return deleteVolumes()
+
+	// Backup commands
+	case "configure_backup":
+		if err := validateBackupConfig(req.Parameters); err != nil {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Invalid backup configuration: %v", err),
+			}, nil
+		}
+		return p.handleBackupCommands(req)
+
+	case "create_backup":
+		return p.handleBackupCommands(req)
+
+	case "set_backup_schedule":
+		schedule, ok := req.Parameters["schedule"]
+		if !ok || schedule == "" {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Backup schedule (cron expression) is required",
+			}, nil
+		}
+		return p.handleBackupCommands(req)
+
+	case "restore_backup":
+		backupFile, ok := req.Parameters["backup_file"]
+		if !ok || backupFile == "" {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: "Backup file path is required",
+			}, nil
+		}
+		return p.handleBackupCommands(req)
+
+	case "view_backup_summary":
+		return p.handleBackupCommands(req)
+
+	default:
+		p.logger.Error("Unknown command", "command", req.Command)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Unknown command: %s", req.Command),
+		}, nil
+	}
+}
+
+func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
+	// Validate required parameters
+	for _, param := range []string{"username", "password", "email"} {
+		if _, ok := req.Parameters[param]; !ok {
+			return &pb.CommandResponse{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Missing required parameter: %s", param),
+			}, nil
 		}
 	}
-	return nil
+
+	// Start Docker containers
+	startResponse, err := runDockerCompose("up", "-d")
+	if err != nil {
+		return startResponse, err
+	}
+
+	// Wait for Gitea to be ready
+	if err := waitForGiteaWithProgress(func(status, step, message string) {
+		log.Info(fmt.Sprintf("[%s] %s: %s", status, step, message))
+	}); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error waiting for Gitea to start: %v", err),
+		}, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to get home directory: %v", err),
+		}, nil
+	}
+
+	setupScriptPath := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea", "setup_gitea.js")
+	if _, err := os.Stat(setupScriptPath); os.IsNotExist(err) {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("setup_gitea.js not found at %s", setupScriptPath),
+		}, nil
+	}
+
+	// Run setup script with real-time output processing
+	cmd := exec.Command("node", setupScriptPath,
+		req.Parameters["username"],
+		req.Parameters["email"],
+		req.Parameters["password"])
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to create stdout pipe: %v", err),
+		}, nil
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to create stderr pipe: %v", err),
+		}, nil
+	}
+
+	if err := cmd.Start(); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Failed to start setup script: %v", err),
+		}, nil
+	}
+
+	// Process script output
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			var msg struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Status  string `json:"status"`
+					Step    string `json:"step"`
+					Details string `json:"details"`
+				} `json:"payload"`
+			}
+
+			if err := json.Unmarshal([]byte(scanner.Text()), &msg); err != nil {
+				// Log raw output if it's not in our expected format
+				log.Info("Setup output", "message", scanner.Text())
+				continue
+			}
+
+			// Log progress update
+			switch msg.Type {
+			case "progress":
+				log.Info(fmt.Sprintf("[%s] %s: %s",
+					msg.Payload.Status,
+					msg.Payload.Step,
+					msg.Payload.Details))
+			case "result":
+				// Final result will be handled after cmd.Wait()
+				continue
+			}
+		}
+	}()
+
+	// Process stderr
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			log.Error("Setup error", "message", scanner.Text())
+		}
+	}()
+
+	// Wait for completion
+	if err := cmd.Wait(); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Setup script failed: %v", err),
+		}, nil
+	}
+
+	return &pb.CommandResponse{
+		Success: true,
+		Result:  "Gitea setup completed successfully",
+	}, nil
+}
+
+func waitForGiteaWithProgress(progressFn func(status, step, message string)) error {
+	client := &http.Client{Timeout: 1 * time.Second}
+	maxAttempts := 120 // 2 minutes
+
+	progressFn("info", "Startup", fmt.Sprintf("Beginning health check for Gitea. Will try for %d seconds.", maxAttempts))
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		progressFn("info", "Health Check", fmt.Sprintf("Attempt %d of %d: Checking http://localhost:3000", attempt, maxAttempts))
+
+		resp, err := client.Get("http://localhost:3000/")
+		if err != nil {
+			progressFn("info", "Health Check", fmt.Sprintf("Connection failed (attempt %d): %v", attempt, err))
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			progressFn("success", "Health Check", "Gitea server responded with 200 OK")
+			return nil
+		}
+
+		progressFn("info", "Health Check", fmt.Sprintf("Got HTTP %d (attempt %d), waiting...", resp.StatusCode, attempt))
+		time.Sleep(1 * time.Second)
+	}
+
+	return fmt.Errorf("Gitea did not become available within %d seconds", maxAttempts)
 }
 
 func setComposeFile(option, customPath string) (*pb.CommandResponse, error) {
@@ -443,14 +778,6 @@ func runDockerCompose(args ...string) (*pb.CommandResponse, error) {
 	}
 	log.Info("Compose file path", "path", composePath)
 
-	composeContent, err := ioutil.ReadFile(composePath)
-	if err != nil {
-		log.Error("Error reading docker-compose file", "error", err)
-	} else {
-		log.Info("Docker-compose file content", "content", string(composeContent))
-	}
-
-	log.Info("Attempting to run docker-compose command")
 	cmdArgs := append([]string{"-f", composePath}, args...)
 	cmd := exec.Command("docker-compose", cmdArgs...)
 	log.Info("Full docker-compose command", "command", cmd.String())
@@ -487,338 +814,6 @@ func getComposePath() (string, error) {
 		return "", fmt.Errorf("docker-compose.yaml not found. Please use 'Set Docker Compose File' to set it")
 	}
 	return composePath, nil
-}
-
-func printGiteaSummary(logger *logger.RateLimitedLogger) (string, error) {
-	logger.Debug("Starting printGiteaSummary function")
-
-	runDockerCommand := func(name string, args ...string) (string, error) {
-		cmd := exec.Command("docker", args...)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			logger.Error("Docker command failed",
-				"command", name,
-				"args", args,
-				"error", err,
-				"output", string(output))
-			return "", fmt.Errorf("%s failed: %v - Output: %s", name, err, output)
-		}
-		logger.Debug("Docker command succeeded",
-			"command", name,
-			"output", string(output))
-		return strings.TrimSpace(string(output)), nil
-	}
-
-	_, err := runDockerCommand("Check Docker", "version")
-	if err != nil {
-		return "", fmt.Errorf("Docker daemon is not accessible: %v", err)
-	}
-
-	allContainers, err := runDockerCommand("List containers", "ps", "--format", "{{.Names}}")
-	if err != nil {
-		return "", fmt.Errorf("Failed to list containers: %v", err)
-	}
-	logger.Debug("All running containers", "containers", allContainers)
-
-	giteaContainer := ""
-	dbContainer := ""
-	for _, container := range strings.Split(allContainers, "\n") {
-		if strings.Contains(container, "gitea") && !strings.Contains(container, "db") {
-			giteaContainer = container
-		} else if strings.Contains(container, "gitea") && strings.Contains(container, "db") {
-			dbContainer = container
-		}
-	}
-
-	if giteaContainer == "" || dbContainer == "" {
-		logger.Warn("Gitea containers are not running")
-		return "", fmt.Errorf("Gitea containers are not running. Please start Gitea first.")
-	}
-
-	logger.Debug("Found Gitea containers", "gitea", giteaContainer, "db", dbContainer)
-
-	giteaPort, err := runDockerCommand("Get Gitea port", "port", giteaContainer, "3000")
-	if err != nil {
-		logger.Warn("Failed to get Gitea port, using default", "error", err)
-		giteaPort = "3000"
-	}
-
-	giteaSshPort, err := runDockerCommand("Get Gitea SSH port", "port", giteaContainer, "22")
-	if err != nil {
-		logger.Warn("Failed to get Gitea SSH port, using default", "error", err)
-		giteaSshPort = "22"
-	}
-
-	giteaIp, err := runDockerCommand("Get Gitea IP", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", giteaContainer)
-	if err != nil {
-		logger.Warn("Failed to get Gitea IP", "error", err)
-		giteaIp = "N/A"
-	}
-
-	dbPort := "5432" // Default Postgres port
-	dbPortMapping, err := runDockerCommand("Get DB port mapping", "port", dbContainer)
-	if err != nil {
-		logger.Warn("Failed to get DB port mapping, using internal port", "error", err)
-	} else if dbPortMapping != "" {
-		dbPort = strings.Split(dbPortMapping, ":")[0]
-	}
-
-	dbIp, err := runDockerCommand("Get DB IP", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dbContainer)
-	if err != nil {
-		logger.Warn("Failed to get DB IP", "error", err)
-		dbIp = "N/A"
-	}
-
-	summary := fmt.Sprintf(`Gitea Summary:
-Gitea Container:
-  Name: %s
-  Web UI: http://localhost:%s
-  SSH: ssh://localhost:%s
-  Internal IP: %s
-
-Database Container:
-  Name: %s
-  Port: %s (internal)
-  Internal IP: %s`,
-		giteaContainer,
-		strings.TrimPrefix(giteaPort, "0.0.0.0:"),
-		strings.TrimPrefix(giteaSshPort, "0.0.0.0:"),
-		giteaIp,
-		dbContainer,
-		dbPort,
-		dbIp)
-
-	logger.Debug("Generated summary", "summary", summary)
-	return summary, nil
-}
-
-func deleteContainersAndImages() (*pb.CommandResponse, error) {
-	log.Info("Starting deleteContainersAndImages")
-
-	if err := checkDockerStatus(); err != nil {
-		log.Error("Docker daemon is not running or accessible", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Docker daemon is not running or accessible: %v", err)}, nil
-	}
-
-	log.Info("Stopping and removing containers with docker-compose down")
-	downOutput, err := runDockerCompose("down")
-	if err != nil {
-		log.Error("Error stopping containers with docker-compose down", "error", err, "output", downOutput)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error stopping containers with docker-compose down: %v\nOutput: %s", err, downOutput)}, nil
-	}
-	log.Info("docker-compose down completed successfully")
-
-	runningContainers, err := getRunningContainers()
-	if err != nil {
-		log.Error("Error checking for running containers", "error", err)
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error checking for running containers: %v", err)}, nil
-	}
-
-	if len(runningContainers) > 0 {
-		log.Warn("Containers are still running after docker-compose down, attempting to force stop", "containers", runningContainers)
-		for _, container := range runningContainers {
-			stopOutput, err := exec.Command("docker", "stop", container).CombinedOutput()
-			if err != nil {
-				log.Error("Error force stopping container", "container", container, "error", err, "output", string(stopOutput))
-				return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error force stopping container %s: %v\nOutput: %s", container, err, stopOutput)}, nil
-			}
-			log.Info("Container force stopped successfully", "container", container)
-		}
-	}
-
-	if err := removeImages("gitea/gitea"); err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: err.Error()}, nil
-	}
-
-	if err := removeImages("postgres:13"); err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: err.Error()}, nil
-	}
-
-	log.Info("deleteContainersAndImages completed successfully")
-	return &pb.CommandResponse{
-		Success: true,
-		Result:  "Containers and images have been deleted.",
-	}, nil
-}
-
-func checkDockerStatus() error {
-	cmd := exec.Command("docker", "info")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Docker is not running or accessible: %v", err)
-	}
-	return nil
-}
-
-func getRunningContainers() ([]string, error) {
-	cmd := exec.Command("docker", "ps", "-q", "--filter", "name=gitea")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("Error listing running containers: %v\nOutput: %s", err, output)
-	}
-	containers := strings.Fields(string(output))
-	return containers, nil
-}
-
-func removeImages(imageName string) error {
-	log.Info("Attempting to remove images", "image", imageName)
-	images, err := exec.Command("docker", "images", imageName, "-q").Output()
-	if err != nil {
-		log.Error("Error listing images", "image", imageName, "error", err)
-		return fmt.Errorf("Error listing %s images: %v", imageName, err)
-	}
-
-	log.Info("Images found", "image", imageName, "count", len(strings.Fields(string(images))))
-	if len(images) > 0 {
-		cmd := exec.Command("docker", "rmi", "-f", strings.TrimSpace(string(images)))
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Error("Error removing images", "image", imageName, "error", err, "output", string(output))
-			return fmt.Errorf("Error removing %s images: %v\nOutput: %s", imageName, err, output)
-		}
-		log.Info("Images removed successfully", "image", imageName)
-	} else {
-		log.Info("No images found to remove", "image", imageName)
-	}
-	return nil
-}
-
-func deleteVolumes() (*pb.CommandResponse, error) {
-	_, err := runDockerCompose("down", "-v")
-	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error deleting volumes: %v", err)}, nil
-	}
-
-	return &pb.CommandResponse{
-		Success: true,
-		Result:  "Volumes have been deleted.",
-	}, nil
-}
-
-func gitConfigSummary() (*pb.CommandResponse, error) {
-	getGitConfig := func(scope string) (string, error) {
-		name, _ := exec.Command("git", "config", "--"+scope, "--get", "user.name").Output()
-		email, _ := exec.Command("git", "config", "--"+scope, "--get", "user.email").Output()
-		return fmt.Sprintf("Name: %s\nEmail: %s", strings.TrimSpace(string(name)), strings.TrimSpace(string(email))), nil
-	}
-
-	globalConfig, err := getGitConfig("global")
-	if err != nil {
-		return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error getting global git config: %v", err)}, nil
-	}
-
-	summary := fmt.Sprintf("Global Git Config:\n%s\n\n", globalConfig)
-
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-	if err := cmd.Run(); err == nil {
-		localConfig, err := getGitConfig("local")
-		if err != nil {
-			return &pb.CommandResponse{Success: false, ErrorMessage: fmt.Sprintf("Error getting local git config: %v", err)}, nil
-		}
-		pwd, _ := os.Getwd()
-		summary += fmt.Sprintf("Local Git Config (%s):\n%s", filepath.Base(pwd), localConfig)
-	} else {
-		summary += "Local Git Config:\nNot a Git repository"
-	}
-
-	return &pb.CommandResponse{
-		Success: true,
-		Result:  summary,
-	}, nil
-}
-
-func setupGitea(req *pb.CommandRequest) (*pb.CommandResponse, error) {
-	log.Info("Starting Gitea containers...")
-	startResponse, err := runDockerCompose("up", "-d")
-	if err != nil {
-		log.Error("Failed to start Gitea containers", "error", err)
-		return startResponse, err
-	}
-	log.Info("Gitea containers started successfully", "output", startResponse.Result)
-
-	log.Info("Waiting for Gitea to be ready...")
-	if err := waitForGitea(); err != nil {
-		log.Error("Gitea failed to start within the expected time", "error", err)
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error waiting for Gitea to start: %v", err),
-		}, nil
-	}
-	log.Info("Gitea is now ready")
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Error("Failed to get user home directory", "error", err)
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Failed to get user home directory: %v", err),
-		}, nil
-	}
-
-	setupScriptPath := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea", "setup_gitea.js")
-
-	if _, err := os.Stat(setupScriptPath); os.IsNotExist(err) {
-		log.Error("setup_gitea.js not found", "path", setupScriptPath)
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("setup_gitea.js not found at %s", setupScriptPath),
-		}, nil
-	}
-
-	log.Info("Running Gitea setup script...")
-	cmd := exec.Command("node", setupScriptPath,
-		req.Parameters["username"],
-		req.Parameters["email"],
-		req.Parameters["password"])
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Error("Gitea setup script failed", "error", err, "output", string(output))
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Gitea setup script failed: %v\nOutput: %s", err, output),
-		}, nil
-	}
-
-	log.Info("Gitea setup script completed", "output", string(output))
-
-	var result struct {
-		Success bool   `json:"success"`
-		Status  string `json:"status"`
-		Message string `json:"message"`
-	}
-
-	var jsonLines []string
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.HasPrefix(line, "{") && strings.HasSuffix(line, "}") {
-			jsonLines = append(jsonLines, line)
-		}
-	}
-
-	if len(jsonLines) == 0 {
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("No JSON output found in script output: %s", output),
-		}, nil
-	}
-
-	if err := json.Unmarshal([]byte(jsonLines[len(jsonLines)-1]), &result); err != nil {
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error parsing script output: %v\nOutput: %s", err, output),
-		}, nil
-	}
-
-	if !result.Success {
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("SSH key upload failed: %s\nFull log:\n%s", result.Message, strings.Join(jsonLines, "\n")),
-		}, nil
-	}
-
-	return &pb.CommandResponse{
-		Success: true,
-		Result:  result.Message,
-	}, nil
 }
 
 func generateAndUploadSSHKey(req *pb.CommandRequest) (*pb.CommandResponse, error) {
@@ -886,26 +881,16 @@ func generateAndUploadSSHKey(req *pb.CommandRequest) (*pb.CommandResponse, error
 
 	uploadScriptPath := filepath.Join(homeDir, ".ssot", "gitspace", "plugins", "data", "scmtea", "ssh-key", "index.js")
 
-	if _, err := os.Stat(uploadScriptPath); os.IsNotExist(err) {
-		log.Error("upload_ssh_key.js not found", "path", uploadScriptPath)
-		return &pb.CommandResponse{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("upload_ssh_key.js not found at %s", uploadScriptPath),
-		}, nil
-	}
-
 	log.Info("Running SSH key upload script...")
 	cmd = exec.Command("bun", "run", uploadScriptPath, username, password, pubKey)
-	output, err = cmd.CombinedOutput()
+	cmdOutput, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Error("SSH key upload script failed", "error", err, "output", string(output))
+		log.Error("SSH key upload script failed", "error", err, "output", string(cmdOutput))
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("SSH key upload script failed: %v\nOutput: %s", err, output),
+			ErrorMessage: fmt.Sprintf("SSH key upload script failed: %v\nOutput: %s", err, cmdOutput),
 		}, nil
 	}
-
-	log.Info("SSH key upload script completed", "output", string(output))
 
 	var result struct {
 		Success bool   `json:"success"`
@@ -913,56 +898,24 @@ func generateAndUploadSSHKey(req *pb.CommandRequest) (*pb.CommandResponse, error
 		Message string `json:"message"`
 	}
 
-	var jsonLines []string
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.HasPrefix(line, "{") && strings.HasSuffix(line, "}") {
-			jsonLines = append(jsonLines, line)
-		}
-	}
-
-	if len(jsonLines) == 0 {
+	if err := json.Unmarshal(cmdOutput, &result); err != nil {
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("No JSON output found in script output: %s", output),
+			ErrorMessage: fmt.Sprintf("Failed to parse script output: %v\nOutput: %s", err, cmdOutput),
 		}, nil
 	}
 
-	// Parse the last JSON line, which should contain the final status
-	if err := json.Unmarshal([]byte(jsonLines[len(jsonLines)-1]), &result); err != nil {
+	if !result.Success {
 		return &pb.CommandResponse{
 			Success:      false,
-			ErrorMessage: fmt.Sprintf("Error parsing script output: %v\nOutput: %s", err, output),
+			ErrorMessage: fmt.Sprintf("SSH key upload failed: %s", result.Message),
 		}, nil
 	}
 
-	// Check if the status is "complete" or if success is true
-	if result.Status == "complete" || result.Success {
-		return &pb.CommandResponse{
-			Success: true,
-			Result:  fmt.Sprintf("SSH key generated and uploaded successfully. Private key path: %s", sshKeyPath),
-		}, nil
-	}
-
-	// If we reach here, it means there was an error
 	return &pb.CommandResponse{
-		Success:      false,
-		ErrorMessage: fmt.Sprintf("SSH key upload failed: %s", result.Message),
+		Success: true,
+		Result:  fmt.Sprintf("SSH key generated and uploaded successfully. Private key path: %s", sshKeyPath),
 	}, nil
-}
-
-func waitForGitea() error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	for i := 0; i < 120; i++ { // Try for 2 minutes
-		resp, err := client.Get("http://localhost:3000/")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil // Gitea is up
-			}
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return fmt.Errorf("Gitea did not start within the expected time")
 }
 
 func generateUniqueID() (string, error) {
@@ -973,6 +926,138 @@ func generateUniqueID() (string, error) {
 	timestamp := time.Now().Unix()
 	combined := append([]byte(fmt.Sprintf("%d", timestamp)), randomBytes...)
 	return hex.EncodeToString(combined), nil
+}
+
+func deleteContainersAndImages() (*pb.CommandResponse, error) {
+	log.Info("Starting deleteContainersAndImages")
+
+	if err := checkDockerStatus(); err != nil {
+		log.Error("Docker daemon is not running or accessible", "error", err)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Docker daemon is not running or accessible: %v", err),
+		}, nil
+	}
+
+	log.Info("Stopping and removing containers")
+	downOutput, err := runDockerCompose("down")
+	if err != nil {
+		log.Error("Error stopping containers", "error", err, "output", downOutput)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error stopping containers: %v", err),
+		}, nil
+	}
+
+	runningContainers, err := getRunningContainers()
+	if err != nil {
+		log.Error("Error checking for running containers", "error", err)
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error checking for running containers: %v", err),
+		}, nil
+	}
+
+	if len(runningContainers) > 0 {
+		log.Warn("Containers still running, force stopping", "containers", runningContainers)
+		for _, container := range runningContainers {
+			cmdOutput, err := exec.Command("docker", "stop", container).CombinedOutput()
+			if err != nil {
+				log.Error("Error force stopping container",
+					"container", container,
+					"error", err,
+					"output", string(cmdOutput))
+				return &pb.CommandResponse{
+					Success: false,
+					ErrorMessage: fmt.Sprintf("Error force stopping container %s: %v\nOutput: %s",
+						container, err, cmdOutput),
+				}, nil
+			}
+			log.Info("Container force stopped",
+				"container", container,
+				"output", string(cmdOutput))
+		}
+	}
+
+	// Remove Gitea images
+	if err := removeImages("gitea/gitea"); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+
+	// Remove Postgres images
+	if err := removeImages("postgres:13"); err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+
+	return &pb.CommandResponse{
+		Success: true,
+		Result:  "Containers and images have been deleted.",
+	}, nil
+}
+
+func checkDockerStatus() error {
+	cmd := exec.Command("docker", "info")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Docker is not running or accessible: %v", err)
+	}
+	return nil
+}
+
+func getRunningContainers() ([]string, error) {
+	cmd := exec.Command("docker", "ps", "-q", "--filter", "name=gitea")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("Error listing running containers: %v", err)
+	}
+	return strings.Fields(string(output)), nil
+}
+
+func removeImages(imageName string) error {
+	log.Info("Removing images", "image", imageName)
+	images, err := exec.Command("docker", "images", imageName, "-q").Output()
+	if err != nil {
+		log.Error("Error listing images", "image", imageName, "error", err)
+		return fmt.Errorf("Error listing %s images: %v", imageName, err)
+	}
+
+	if len(images) > 0 {
+		cmd := exec.Command("docker", "rmi", "-f", strings.TrimSpace(string(images)))
+		cmdOutput, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Error("Error removing images",
+				"image", imageName,
+				"error", err,
+				"output", string(cmdOutput))
+			return fmt.Errorf("Error removing %s images: %v\nOutput: %s",
+				imageName, err, cmdOutput)
+		}
+		log.Info("Images removed successfully",
+			"image", imageName,
+			"output", string(cmdOutput))
+	}
+
+	return nil
+}
+
+func deleteVolumes() (*pb.CommandResponse, error) {
+	_, err := runDockerCompose("down", "-v")
+	if err != nil {
+		return &pb.CommandResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("Error deleting volumes: %v", err),
+		}, nil
+	}
+
+	return &pb.CommandResponse{
+		Success: true,
+		Result:  "Volumes have been deleted.",
+	}, nil
 }
 
 func main() {
@@ -999,7 +1084,7 @@ func main() {
 			logger.Error("Error reading message", "error", err)
 			continue
 		}
-		logger.Debug("Received message", "type", msgType, "content", fmt.Sprintf("%+v", msg))
+		logger.Debug("Received message", "type", msgType)
 
 		var response proto.Message
 		switch msgType {
@@ -1018,7 +1103,7 @@ func main() {
 			continue
 		}
 
-		logger.Debug("Sending response", "type", msgType, "content", fmt.Sprintf("%+v", response))
+		logger.Debug("Sending response", "type", msgType)
 		err = gsplug.WriteMessage(os.Stdout, response)
 		if err != nil {
 			logger.Error("Error writing response", "error", err)
