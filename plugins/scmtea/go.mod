@@ -13,7 +13,7 @@ require (
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/lipgloss v0.13.1 // indirect
-	github.com/charmbracelet/x/ansi v0.3.2 // indirect
+	github.com/charmbracelet/x/ansi v0.4.0 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -27,4 +27,4 @@ require (
 	google.golang.org/grpc v1.67.1 // indirect
 )
 
-replace github.com/ssotops/gitspace-plugin-sdk => ../../../../github/ssotops/gitspace-plugin-sdk
+replace github.com/ssotops/gitspace-plugin-sdk => ../../../gitspace-plugin-sdk
