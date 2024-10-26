@@ -27,4 +27,4 @@ require (
 	google.golang.org/grpc v1.67.1 // indirect
 )
 
-replace github.com/ssotops/gitspace-plugin-sdk => ../../../gitspace-plugin-sdk
+replace github.com/ssotops/gitspace-plugin-sdk => ../../../../github/ssotops/gitspace-plugin-sdk

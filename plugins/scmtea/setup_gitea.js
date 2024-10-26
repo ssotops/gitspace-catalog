@@ -1,6 +1,5 @@
 import { chromium } from 'playwright';
 
-// Helper to send structured progress messages to stdout
 function emitProgress(status, step, details = '') {
   const message = JSON.stringify({
     type: 'progress',
@@ -20,86 +19,112 @@ async function setupGitea(username, email, password) {
   let page;
 
   try {
-    emitProgress('started', 'browser', 'Launching browser');
+    emitProgress('info', 'browser', 'Launching browser');
     browser = await chromium.launch({
       headless: false,
-      args: ['--start-maximized']
+      args: ['--start-maximized'],
+      // This ensures we can see logs from the browser
+      logger: {
+        isEnabled: (name) => true,
+        log: (name, severity, message) => console.log(`Browser ${severity}: ${message}`)
+      }
     });
 
-    // Create context with larger viewport
+    emitProgress('info', 'browser', 'Creating browser context');
     context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
-      recordVideo: { dir: 'videos/' }
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'  
     });
+
+    // Enable verbose logging
+    context.setDefaultTimeout(60000);
+    context.setDefaultNavigationTimeout(60000);
 
     page = await context.newPage();
     
-    emitProgress('started', 'navigation', 'Loading Gitea initial setup page');
+    emitProgress('info', 'navigation', 'Opening Gitea setup page');
     await page.goto('http://localhost:3000/', {
       waitUntil: 'networkidle',
       timeout: 60000
     });
-    emitProgress('completed', 'navigation', 'Initial page loaded');
 
-    emitProgress('started', 'setup', 'Opening administrator settings');
-    await page.click('div.ui.container form details >> text=Admin Account Settings');
-    emitProgress('completed', 'setup', 'Administrator section expanded');
+    // Log the page content for debugging
+    const content = await page.content();
+    console.log('Page content:', content);
 
-    // Fill in administrator account details with pauses for visibility
-    emitProgress('started', 'input', 'Entering administrator details');
-    
-    await page.fill('input[name="admin_name"]', username);
-    emitProgress('progress', 'input', 'Username entered');
-    await page.waitForTimeout(500);
-
-    await page.fill('input[name="admin_email"]', email);
-    emitProgress('progress', 'input', 'Email entered');
-    await page.waitForTimeout(500);
-
-    await page.fill('input[name="admin_password"]', password);
-    await page.fill('input[name="admin_confirm_password"]', password);
-    emitProgress('progress', 'input', 'Password configured');
-    await page.waitForTimeout(500);
-
-    emitProgress('started', 'installation', 'Starting Gitea installation');
-    
-    // Click install and wait for completion
-    const [response] = await Promise.all([
-      page.waitForNavigation({
-        waitUntil: 'networkidle',
-        timeout: 120000
-      }),
-      page.click('button >> text=Install Gitea')
-    ]);
-
-    // Take a screenshot of the completed installation
-    await page.screenshot({ 
-      path: 'gitea-setup-complete.png',
-      fullPage: true 
+    // Take screenshots at each step
+    await page.screenshot({
+      path: 'setup-initial.png',
+      fullPage: true
     });
 
-    emitProgress('completed', 'installation', 'Gitea installation completed successfully');
+    emitProgress('info', 'setup', 'Configuring administrator account');
+    await page.click('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/summary', {
+      timeout: 10000,
+      waitFor: 'visible'
+    });
+
+    await page.screenshot({
+      path: 'setup-admin-expanded.png',
+      fullPage: true
+    });
+
+    emitProgress('info', 'setup', 'Filling in administrator details');
+    
+    // Fill username with delay for visibility
+    await page.fill('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[1]/input', username);
+    await page.waitForTimeout(500);
+    
+    // Fill email
+    await page.fill('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[2]/input', email);
+    await page.waitForTimeout(500);
+    
+    // Fill passwords
+    await page.fill('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[3]/input', password);
+    await page.fill('xpath=/html/body/div[1]/div/div/div/div/form/div[15]/details[3]/div[4]/input', password);
+    
+    await page.screenshot({
+      path: 'setup-filled.png',
+      fullPage: true
+    });
+
+    emitProgress('info', 'setup', 'Starting Gitea installation');
+    
+    // Click install and wait for completion
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle', timeout: 120000 }),
+      page.click('xpath=/html/body/div[1]/div/div/div/div/form/div[18]/div[2]/button')
+    ]);
+
+    await page.screenshot({
+      path: 'setup-complete.png',
+      fullPage: true
+    });
+
+    emitProgress('success', 'setup', 'Installation completed successfully');
     
     return {
       success: true,
-      message: 'Gitea installation completed successfully',
-      screenshot: 'gitea-setup-complete.png'
+      message: 'Gitea installation completed successfully'
     };
 
   } catch (error) {
     emitProgress('error', 'setup', `Setup failed: ${error.message}`);
     
     if (page) {
-      await page.screenshot({ 
-        path: 'gitea-setup-error.png',
-        fullPage: true 
+      await page.screenshot({
+        path: 'setup-error.png',
+        fullPage: true
       });
+
+      // Log the page content on error
+      const errorContent = await page.content();
+      console.error('Page content at error:', errorContent);
     }
 
     return {
       success: false,
-      message: `Setup failed: ${error.message}`,
-      screenshot: 'gitea-setup-error.png'
+      message: `Setup failed: ${error.message}`
     };
 
   } finally {
@@ -107,7 +132,7 @@ async function setupGitea(username, email, password) {
       await context.close();
     }
     if (browser) {
-      emitProgress('cleanup', 'browser', 'Closing browser');
+      emitProgress('info', 'cleanup', 'Closing browser');
       await browser.close();
     }
   }
